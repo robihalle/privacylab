@@ -1,0 +1,38 @@
+services:
+  web:
+    environment:
+      ANYONE_WASM_ENABLED: "1"
+
+  wasm-snapshot:
+    build:
+      context: ./wasm-bridge
+      target: snapshot
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    volumes:
+      - wasm-directory:/state
+    networks: [uplink]
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+
+  wasm-bridge:
+    build:
+      context: ./wasm-bridge
+      target: bridge
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      LAB_ORIGIN: ${LAB_ORIGIN:?Set LAB_ORIGIN to the browser-facing URL}
+    volumes:
+      - wasm-directory:/state:ro
+    networks: [frontend, uplink]
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  wasm-directory:

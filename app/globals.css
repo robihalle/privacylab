@@ -123,6 +123,11 @@ h3 { font-size: 1.03rem; line-height: 1.25; }
 .secondary:hover:not(:disabled), .quiet:hover:not(:disabled) { background: #243237; border-color: #748d93; }
 .quiet { min-height: 36px; padding: 5px 10px; }
 .action-note { margin-top: 9px; font-size: .8rem; }
+.wasm-option { margin-top: 14px; }
+.wasm-option label { display: flex; align-items: center; gap: 8px; font-size: .875rem; cursor: pointer; }
+.wasm-option input { width: 1rem; height: 1rem; flex: none; accent-color: var(--mint); }
+.wasm-option p { margin: 4px 0 0 24px; font-size: .8rem; }
+.wasm-option a { color: var(--mint); text-decoration: underline; }
 
 .result-grid, .method-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .result-grid { margin-top: 19px; }

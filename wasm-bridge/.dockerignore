@@ -1,0 +1,8 @@
+**
+!server.py
+!snapshot.json
+!artifacts/
+!artifacts/client.js
+!artifacts/tor_js_bg.wasm
+!artifacts/tor_js_bg.wasm.gz
+!artifacts/tor-js-gateway

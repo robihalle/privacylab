@@ -1,0 +1,10 @@
+@wasm path /wasm-lab/*
+handle @wasm {
+	reverse_proxy wasm-bridge:8080 {
+		header_up X-Lab-Client-IP {http.request.remote.host}
+		stream_timeout 3m
+	}
+}
+handle {
+	reverse_proxy web:3000
+}

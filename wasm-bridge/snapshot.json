@@ -1,0 +1,16 @@
+{
+  "data_dir": "/state",
+  "bind_address": "127.0.0.1",
+  "advertised_addresses": ["127.0.0.1"],
+  "kps_port": 12298,
+  "kps_key_file": "/state/kps.key",
+  "keccak_repo": "",
+  "keccak_branch": "",
+  "keccak_poll_interval": 86400,
+  "keccak_manual_sync_min_interval": 1800,
+  "tunnel_max": 16,
+  "tunnel_per_ip": 8,
+  "tunnel_idle_timeout": 60,
+  "tunnel_max_lifetime": 180,
+  "demo": true
+}

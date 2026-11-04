@@ -49,3 +49,12 @@ test('the LXC mode rejects other HTTP gateways and unexpected origins', async ()
 test('JSON null returns a validation error', async () => {
   assert.equal((await privacyApi(req(null), env)).status, 400);
 });
+
+test('browser WASM is opt-in and advertised only by the LXC API', async () => {
+  const status = new Request(origin + '/api/lab/status');
+  const enabled = {...env, ANYONE_WASM_ENABLED: '1'};
+  const options = {allowInternalGateway: true};
+  assert.equal((await (await privacyApi(status, env, options)).json()).wasm, false);
+  assert.equal((await (await privacyApi(status, enabled)).json()).wasm, false);
+  assert.equal((await (await privacyApi(status, enabled, options)).json()).wasm, true);
+});
