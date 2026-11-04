@@ -114,7 +114,7 @@ function loadBrowserClient() {
     const timeout = setTimeout(finish, 15_000);
     script.onload = () => finish((window as Window & { AnyoneWasmLab?: WasmLab }).AnyoneWasmLab);
     script.onerror = () => finish();
-    document.head.append(script);
+    document.head.appendChild(script);
   }).catch((error) => {
     browserClient = undefined;
     throw error;
