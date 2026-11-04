@@ -1,23 +1,23 @@
-# Anyone Privacy Lab auf Proxmox installieren
+# Install Anyone Privacy Lab on Proxmox
 
-Alle Dienste laufen gemeinsam in einem eigenen Debian-LXC. Der Stack startet Caddy, Next.js, das Python-Gateway und den nativen Anyone-Rust-Client. Für die erste Inbetriebnahme ist HTTP im eigenen LAN vorgesehen. Eine Domain kann anschließend HTTPS erhalten.
+All services run in one dedicated Debian LXC. The stack includes Caddy, Next.js, the Python gateway, and the native Anyone Rust client. Start with HTTP on your LAN. You can add HTTPS with your own domain later.
 
-## 1. LXC auf dem Proxmox-Host anlegen
+## 1. Create the LXC on the Proxmox host
 
-In der Proxmox-Oberfläche ein Debian-13-Standardtemplate für **amd64** herunterladen und **CT erstellen** wählen. Das vorgegebene Anyone-Rust-Image wurde für Linux amd64 veröffentlicht.
+In the Proxmox web interface, download the Debian 13 standard template for **amd64** and select **Create CT**. The default Anyone Rust image is published for Linux amd64.
 
-| Einstellung | Startwert |
+| Setting | Starting value |
 | --- | --- |
 | Hostname | `privacy-lab` |
-| Container | Unprivilegiert |
-| CPU | 2 Kerne |
-| RAM und Swap | 2 GiB RAM und 1 GiB Swap |
-| Root-Disk | 12 GiB |
-| Netzwerk | Eigene feste LAN-IPv4 oder DHCP-Reservierung, passendes Gateway und DNS |
+| Container | Unprivileged |
+| CPU | 2 cores |
+| RAM and swap | 2 GiB RAM and 1 GiB swap |
+| Root disk | 12 GiB |
+| Network | Static LAN IPv4 address or DHCP reservation, with a gateway and DNS |
 | Features | `nesting=1,keyctl=1` |
-| Start beim Booten | Aktiviert |
+| Start at boot | Enabled |
 
-Beim neuen, noch gestoppten Container die Features und den Autostart setzen. `150` durch die tatsächlich gewählte CT-ID ersetzen. Diese Befehle laufen auf dem **Proxmox-Host**.
+Set the features and enable startup at boot while the new container is stopped. Replace `150` with your container ID. Run these commands on the **Proxmox host**.
 
 ```sh
 CTID=150
@@ -26,9 +26,9 @@ pct start "$CTID"
 pct enter "$CTID"
 ```
 
-## 2. Docker im LXC installieren
+## 2. Install Docker inside the LXC
 
-Ab hier alle Befehle als `root` **im LXC** ausführen. Die Pakete kommen aus dem offiziellen [Docker-APT-Repository für Debian](https://docs.docker.com/engine/install/debian/).
+Run the remaining installation commands as `root` **inside the LXC**. Install the packages from the official [Docker APT repository for Debian](https://docs.docker.com/engine/install/debian/).
 
 ```sh
 apt-get update
@@ -54,7 +54,7 @@ docker compose version
 docker run --rm hello-world
 ```
 
-## 3. Privacy Lab starten
+## 3. Start Privacy Lab
 
 ```sh
 git clone https://github.com/robihalle/privacylab.git /opt/privacylab
@@ -64,7 +64,7 @@ printf '\nGATEWAY_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
 nano .env
 ```
 
-In `.env` beide Beispielwerte mit der eigenen LXC-IP belegen. `LAB_ORIGIN` ist die exakte Adresse, die du später im Browser aufrufst, inklusive `http://` oder `https://` und ohne abschließenden Schrägstrich. Lies die [Anyone-Nutzungsbedingungen](https://anyone.io/terms). Falls du sie akzeptierst, ergänze `ANYONE_TERMS_FLAG=--agree-to-terms`. Der zufällige Token bleibt in `.env`.
+In `.env`, set `LAB_BIND_IP` to your LXC's IPv4 address and `LAB_ORIGIN` to the exact address you will open in your browser. Include `http://` or `https://` and omit the trailing slash. Read the [Anyone terms](https://anyone.io/terms). If you accept them, add `ANYONE_TERMS_FLAG=--agree-to-terms`. Keep the generated token in `.env`.
 
 ```sh
 docker compose config --quiet
@@ -74,37 +74,37 @@ docker compose ps
 docker compose logs --tail=80 anyone
 ```
 
-Der erste Build lädt Node- und Python-Abhängigkeiten. Der Client benötigt danach ausgehende TCP-Verbindungen zu Anyone-Authorities und Relays. Für das gesamte Setup werden außerdem DNS und HTTPS zu den Paketquellen, Container-Registries und dem Testdienst benötigt. Eingehend bindet Compose nur Caddys Ports 80 und 443 an die LXC-IP. Im HTTP-LAN-Betrieb wird Port 80 verwendet. Port 443 ist für HTTPS reserviert. Die interne Gateway-Schnittstelle und der SOCKS-Port 9150 brauchen keine Freigabe.
+The first build downloads Node.js and Python dependencies. The Anyone client then needs outbound TCP connections to Anyone directory authorities and relays. The setup also requires DNS and HTTPS access to package repositories, container registries, and the test service. Compose binds only Caddy's ports 80 and 443 to the LXC address. LAN HTTP uses port 80. Port 443 is reserved for HTTPS. Keep the gateway and SOCKS port 9150 internal.
 
-Das Anyone-Image ist in `compose.yaml` per Digest fixiert. Für einen gezielten Clientwechsel kann `ANYONE_IMAGE` in `.env` auf einen geprüften Digest gesetzt werden.
+The Anyone image is pinned by digest in `compose.yaml`. To change the client version, set `ANYONE_IMAGE` in `.env` to a reviewed image digest.
 
-## 4. Live-Test
+## 4. Run a live test
 
-Warte auf den abgeschlossenen Bootstrap in den Anyone-Logs. Dann im LXC ausführen, mit der Adresse aus `.env` als Argument.
+Wait for the Anyone logs to show that bootstrap has completed. Run the following command inside the LXC with your `LAB_ORIGIN` as the argument.
 
 ```sh
 bash deploy/smoke-test.sh http://192.168.178.50
 ```
 
-Der Test lädt die Website, prüft den API-Status und fordert eine echte Messung über Gateway und SOCKS an. Bei Erfolg erscheinen die vom Testziel gemeldete IP, die Messzeiten und der Transport `anyone-rust-socks5h`. Der Statusendpunkt allein bestätigt nur die Konfiguration.
+The script loads the website, checks the API status, and sends a real request through the gateway and SOCKS proxy. On success, it prints the IP reported by the test endpoint, the timings, and the `anyone-rust-socks5h` transport. The status endpoint confirms configuration. The test request checks whether the network path works.
 
-Öffne dieselbe URL im Browser. Wähle **Anyone-Vergleich** und **Beide Wege testen**. Beide Ergebniskarten sollen eine gemessene IP anzeigen. Die direkte Messung erfolgt vom Gerät mit dem Browser, die zweite vom LXC über den Anyone-Client. Für die Browser-Zwischenablage ist HTTPS erforderlich. Der JSON-Download funktioniert auch über LAN-HTTP.
+Open the same URL in your browser. Select **Anyone comparison** and then **Test both paths**. Both result cards should display a measured IP address. The direct test runs from the device with your browser. The Anyone test runs from the LXC through the Anyone client. The clipboard button requires HTTPS. The JSON download also works over LAN HTTP.
 
-## Optional mit eigener Domain und HTTPS
+## Optional HTTPS with your own domain
 
-Setze einen DNS-A-Record für deine Domain und leite extern TCP 80 und 443 an die LXC-IP weiter. Für den hier beschriebenen IPv4-Aufbau keinen AAAA-Record auf eine Adresse zeigen lassen, unter der Caddy nicht erreichbar ist. `LAB_BIND_IP` bleibt die LXC-IP. Setze `LAB_ORIGIN=https://lab.deine-domain.de` und wende die Änderung mit `docker compose up -d` an. Caddy bezieht und erneuert das Zertifikat. Falls du ein öffentlich erreichbares Lab nur selbst nutzen möchtest, begrenze den Zugriff über deine Firewall oder [Caddys HTTP Basic Auth](https://caddyserver.com/docs/caddyfile/directives/basic_auth). Der Vergleich kann bis zu drei Gateway-Messungen parallel ausführen.
+Create a DNS A record for your domain and forward external TCP ports 80 and 443 to the LXC's IPv4 address. For this IPv4 setup, omit any AAAA record unless Caddy is also reachable at the advertised IPv6 address. Keep `LAB_BIND_IP` set to the LXC's IP. Set `LAB_ORIGIN=https://lab.your-domain.example` and apply the change with `docker compose up -d`. Caddy obtains and renews the TLS certificate. For a public address you want to use privately, restrict access with your firewall or [Caddy's HTTP Basic Auth](https://caddyserver.com/docs/caddyfile/directives/basic_auth). The gateway handles up to three simultaneous tests.
 
-## Betrieb und Fehlersuche
+## Operations and troubleshooting
 
-| Symptom | Prüfung |
+| Symptom | What to check |
 | --- | --- |
-| Docker meldet einen Mount- oder Berechtigungsfehler | Auf dem Proxmox-Host `pct config <CTID>` prüfen. Der LXC soll unprivilegiert sein und `nesting=1,keyctl=1` gesetzt haben. Bei `ip_unprivileged_port_start … permission denied` auf Proxmox VE 9 das Hostpaket `lxc-pve` prüfen. Der [Fix](https://github.com/opencontainers/runc/issues/4968) ist ab `6.0.5-2` enthalten. Nach dem Host-Update den CT neu starten. |
-| Website antwortet nicht | `docker compose ps` und `docker compose logs caddy web` prüfen. LAN-IP, Bind-Adresse und die Freigabe für TCP 80 beziehungsweise 443 kontrollieren. |
-| Anyone-Test antwortet mit HTTP 403 | Browseradresse und `LAB_ORIGIN` abgleichen. Protokoll und Host müssen exakt übereinstimmen. |
-| Anyone-Test antwortet mit HTTP 502 | `docker compose logs --tail=80 anyone gateway` prüfen. Bootstrap, ausgehende TCP-Verbindungen und die Erreichbarkeit von httpbingo.org über das Anyone-Netz prüfen. |
-| Dienste starten nach CT-Neustart nicht | `systemctl status docker` und `docker compose ps -a` prüfen. Der CT-Autostart wird auf dem Proxmox-Host gesetzt. |
+| Docker reports a mount or permission error | Run `pct config <CTID>` on the Proxmox host. Confirm the LXC is unprivileged and has `nesting=1,keyctl=1`. For `ip_unprivileged_port_start … permission denied` on Proxmox VE 9, check the host's `lxc-pve` package. The [fix](https://github.com/opencontainers/runc/issues/4968) is included from `6.0.5-2` onward. Restart the container after updating the host. |
+| The website does not respond | Run `docker compose ps` and `docker compose logs caddy web`. Check the LAN IP, bind address, and firewall rules for TCP 80 or 443. |
+| The Anyone test returns HTTP 403 | Check the browser URL against `LAB_ORIGIN`. The scheme and host must match exactly. |
+| The Anyone test returns HTTP 502 | Run `docker compose logs --tail=80 anyone gateway`. Check bootstrap, outbound TCP connectivity, and whether the Anyone network can reach httpbingo.org. |
+| Services do not start after a container reboot | Run `systemctl status docker` and `docker compose ps -a`. Check the container's startup setting on the Proxmox host. |
 
-Nach einem Repository-Update im LXC:
+To update the installation, run the following inside the LXC.
 
 ```sh
 cd /opt/privacylab
@@ -113,6 +113,6 @@ docker compose config --quiet
 docker compose up -d --build
 ```
 
-`.env` enthält die Zugangsdaten. Die Compose-Volumes halten den Anyone-Zustand und die TLS-Daten von Caddy. Sichere sie mit dem LXC. Ein normales `docker compose down` erhält die Volumes.
+The `.env` file contains the gateway credential. The Compose volumes store Anyone client state and Caddy's TLS data. Back them up with the LXC. Running `docker compose down` preserves the volumes.
 
-Der Besucher verbindet sich für den Direkt-Test mit `httpbingo.org`. Der Testdienst sieht dabei seine öffentliche Quell-IP und die Testkennung. Das Lab speichert Messwerte nur in der laufenden Browsersitzung, bis der Nutzer sie exportiert. Die Anzeige des Gateway-Status ist kein Nachweis für die Erreichbarkeit des Anyone-Netzes. Dafür gibt es den Live-Test oben.
+The direct test connects the visitor's browser to `httpbingo.org`, which sees the visitor's public source IP and the test ID. The lab holds results in the current browser session. Visitors can export them as a JSON report. Use the live test above to verify connectivity to the Anyone network.

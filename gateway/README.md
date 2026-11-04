@@ -1,11 +1,11 @@
 # Anyone Privacy Lab Gateway
 
-Das Gateway ist der interne Python-Adapter des [gemeinsamen LXC-Stacks](../docs/proxmox-lxc.md). Die Website ruft den Adapter über `http://gateway:8080` auf. Der Adapter verwendet den nativen Client unter `socks5h://anyone:9150`. Beide Dienste haben keine veröffentlichten Ports.
+The gateway is the internal Python adapter in the [single-LXC stack](../docs/proxmox-lxc.md). The website calls it at `http://gateway:8080`, and the adapter uses the native client at `socks5h://anyone:9150`. Both services are reachable within Docker, with no published ports.
 
-- `POST /v1/test` erwartet einen Bearer-Token und eine Testkennung. Das Ziel ist fest auf `https://httpbingo.org/anything/<test-id>` gesetzt.
-- Das Gateway verwendet Proxy-DNS, ignoriert Proxy-Umgebungsvariablen, folgt keinen Weiterleitungen und lehnt abweichende Testkennungen sowie ungültige IP-Antworten ab.
-- Das interne Docker-Netz verhindert direkte externe Verbindungen des Gateways. Der Anyone-Client besitzt einen separaten ausgehenden Netzwerkanschluss.
-- Pro Prozess laufen höchstens drei Messungen gleichzeitig. Die App führt kein Zugriffsprotokoll und speichert keine Messergebnisse auf dem Server.
-- Die Laufzeit der Gateway-Messung umfasst den Aufruf über SOCKS bis zum Testziel. Der Webserver misst zusätzlich seine eigene Roundtrip-Zeit zum Gateway.
+- `POST /v1/test` requires a bearer token and a test ID. It always uses `https://httpbingo.org/anything/<test-id>` as its destination.
+- The gateway resolves DNS through SOCKS, ignores proxy environment variables, and rejects redirects, mismatched test IDs, and invalid IP responses.
+- The gateway's internal Docker network blocks direct external connections. The Anyone client has a separate network for outbound traffic.
+- Each process can run up to three tests concurrently. The app keeps no access log or server-side results.
+- The gateway measures the request through SOCKS to the test endpoint. The web server also records its own round-trip time to the gateway.
 
-Die Python-Tests prüfen das Verhalten mit simulierten Netzwerkantworten. Der [Live-Test](../docs/proxmox-lxc.md#4-live-test) prüft den gesamten installierten Pfad.
+The Python tests use simulated network responses. The [live test](../docs/proxmox-lxc.md#4-run-a-live-test) checks the full path after installation.

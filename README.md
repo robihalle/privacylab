@@ -1,23 +1,23 @@
 # Anyone Privacy Lab
 
-Eigenständige Tech-Demo für das Anyone-Netzwerk. Sie vergleicht, welche Quell-IP ein HTTPS-Ziel bei einer direkten Browseranfrage und bei einer Anfrage über den nativen Anyone-Rust-Client sieht.
+A standalone tech demo for the Anyone network. Compare the source IP an HTTPS endpoint sees when a request comes directly from your browser and when it goes through the native Anyone Rust client.
 
-## Installation auf Proxmox
+## Install on Proxmox
 
-Die [Schritt-für-Schritt-Anleitung](docs/proxmox-lxc.md) führt vom leeren Debian-13-LXC auf amd64 bis zum Live-Test. Ein Docker-Compose-Stack startet Website, Caddy, Gateway und Anyone-Client im selben unprivilegierten LXC. Caddy ist der einzige Dienst mit veröffentlichten Ports. Gateway und SOCKS bleiben im internen Docker-Netz.
+The [installation guide](docs/proxmox-lxc.md) walks you through creating a Debian 13 LXC on amd64 and running a live test. Docker Compose starts the website, Caddy, the gateway, and the Anyone client in a single unprivileged LXC. Caddy is the only service with published ports. The gateway and SOCKS proxy stay on the internal Docker network.
 
-Der Direkt-Test läuft vom Browser zu `httpbingo.org`. Für den Anyone-Test nimmt die Website nur eine Testkennung entgegen und leitet sie an das interne Gateway. Dieses ruft dasselbe feste HTTPS-Ziel über SOCKS mit Proxy-DNS auf. Die Ergebnisse zeigen, was das Testziel meldet. Die Grafik veranschaulicht den Verbindungsweg und verwendet keine Live-Topologie. Website und Gateway laufen serverseitig, der Rust-Client läuft nativ im LXC.
+The direct test sends a request from your browser to `httpbingo.org`. For the Anyone test, the website accepts a test ID and forwards it to the internal gateway. The gateway requests the same fixed HTTPS endpoint through SOCKS, with DNS resolution handled by the proxy. The results show what the test endpoint reports. The diagram illustrates the general route. The website, gateway, and native Rust client all run inside the LXC.
 
-## Entwicklung
+## Development
 
-Node.js 24 und pnpm 11.25.0 verwenden.
+Use Node.js 24 and pnpm 11.25.0.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Die Website ist dann unter http://localhost:3000 erreichbar. Der Anyone-Vergleich benötigt den Compose-Stack.
+Open http://localhost:3000. The Anyone comparison requires the Compose stack.
 
 ```sh
 pnpm build
@@ -27,4 +27,4 @@ python3 -m venv /tmp/privacylab-venv
 /tmp/privacylab-venv/bin/python -m unittest discover -s gateway -p test_gateway.py
 ```
 
-Die [Gateway-Dokumentation](gateway/README.md) beschreibt den internen Adapter. Das Projekt ist eine unabhängige Community-Demo. Upstream-Client ist [anyone-protocol/anyone-rust](https://github.com/anyone-protocol/anyone-rust). Drittanbieter-Code behält seine jeweiligen Lizenzbedingungen.
+The [gateway documentation](gateway/README.md) describes the internal adapter. This project is an independent community demo. It uses the upstream [Anyone Rust client](https://github.com/anyone-protocol/anyone-rust). Third-party code retains its respective license terms.

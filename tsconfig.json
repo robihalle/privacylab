@@ -42,6 +42,7 @@
   ],
   "exclude": [
     "node_modules",
+    "vite.config.ts",
     "examples",
     "dist",
     ".vinext",

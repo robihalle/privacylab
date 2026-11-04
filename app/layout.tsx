@@ -1,4 +1,4 @@
 import type { Metadata } from 'next';
 import './globals.css';
-export const metadata: Metadata = { title:'Anyone Privacy Lab', description:'Verbindungen verstehen. Sichtbarkeit messen. Ein unabhängiges Community-Lab für das Anyone-Netzwerk.', icons:{icon:'/favicon.svg'} };
-export default function RootLayout({children}:Readonly<{children:React.ReactNode}>){return <html lang="de"><body>{children}</body></html>}
+export const metadata: Metadata = { title:'Anyone Privacy Lab', description:'See what a destination server learns from direct and Anyone-routed requests. An independent community lab for the Anyone network.', icons:{icon:'/favicon.svg'} };
+export default function RootLayout({children}:Readonly<{children:React.ReactNode}>){return <html lang="en"><body>{children}</body></html>}
