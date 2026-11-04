@@ -5,11 +5,12 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown, ArrowRight, ArrowUpRight, CircleAlert, CircleCheck, Copy, Download,
-  Globe, LoaderCircle, Monitor, Play, RefreshCw, Route, ShieldCheck,
+  Cpu, Globe, LoaderCircle, Monitor, Play, RefreshCw, Route, ShieldCheck,
 } from 'lucide-react';
 
 const endpoint = 'https://httpbingo.org';
 const rustRepo = 'https://github.com/anyone-protocol/anyone-rust';
+const wasmRoadmap = 'https://anyone-protocol.medium.com/october-development-summary-dd246e087ac4';
 
 type Result = {
   ip: string;
@@ -33,6 +34,11 @@ const statusLabels = {
   success: 'Measured',
   error: 'Failed',
 };
+
+function createTestId() {
+  return crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)),
+    (byte) => byte.toString(16).padStart(2, '0')).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+}
 
 function errorMessage(error: unknown, path: 'direct' | 'anyone') {
   if (error instanceof DOMException && error.name === 'TimeoutError') {
@@ -105,7 +111,7 @@ function ResultCard({ anyone = false, measurement }: { anyone?: boolean; measure
     <article className={'result-card' + (anyone ? ' result-card-anyone' : '')}>
       <div className="result-header">
         <span className="icon-box"><Icon size={20} aria-hidden="true" /></span>
-        <h3>{anyone ? 'Via Anyone' : 'Direct'}</h3>
+        <h3>{anyone ? 'Anyone via lab server' : 'Direct'}</h3>
         <span className={'badge badge-' + measurement.state}>
           {measurement.state === 'running' && <LoaderCircle size={13} className="spin" aria-hidden="true" />}
           {statusLabels[measurement.state]}
@@ -129,7 +135,6 @@ export default function Home() {
   const [direct, setDirect] = useState<Measurement>({ state: 'idle' });
   const [anyone, setAnyone] = useState<Measurement>({ state: 'idle' });
   const [running, setRunning] = useState(false);
-  const [testId, setTestId] = useState<string>();
   const [reportNotice, setReportNotice] = useState('');
   const runInProgress = useRef(false);
 
@@ -155,18 +160,17 @@ export default function Home() {
 
   async function run(compare: boolean) {
     if (runInProgress.current || (compare && gateway !== 'configured')) return;
+    const directId = createTestId();
+    const anyoneId = compare ? createTestId() : null;
     runInProgress.current = true;
-    const nonce = crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)),
-      (byte) => byte.toString(16).padStart(2, '0')).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
-    setTestId(nonce);
     setReportNotice('');
     setRunning(true);
     setDirect({ state: 'running' });
     setAnyone({ state: compare ? 'running' : 'skipped' });
     try {
       await Promise.all([
-        measure('direct', nonce).then(setDirect),
-        compare && measure('anyone', nonce).then(setAnyone),
+        measure('direct', directId).then(setDirect),
+        anyoneId && measure('anyone', anyoneId).then(setAnyone),
       ]);
     } finally {
       runInProgress.current = false;
@@ -191,6 +195,7 @@ export default function Home() {
       },
       limitations: [
         'The Anyone request uses the native Rust client on the lab server.',
+        'The browser WASM path is planned and is not part of the measurement.',
         'The exit IP is reported by the gateway. The circuit is not independently verified.',
         'Timings begin at the browser for Direct and at the gateway for Anyone.',
       ],
@@ -248,7 +253,7 @@ export default function Home() {
           <div className="section-heading">
             <div>
               <h2 id="test-title">Compare your connection</h2>
-              <p>Both requests use HTTPS and the same test ID at <a href={endpoint} target="_blank" rel="noreferrer">httpbingo.org <ArrowUpRight size={13} aria-hidden="true" /></a>.</p>
+              <p>The two live paths send separate HTTPS requests to <a href={endpoint} target="_blank" rel="noreferrer">httpbingo.org <ArrowUpRight size={13} aria-hidden="true" /></a>.</p>
             </div>
             <div className="gateway-status">
               <span className={'badge gateway-' + gateway} role="status"><i />{gatewayLabels[gateway]}</span>
@@ -264,18 +269,27 @@ export default function Home() {
           <div className="actions">
             <button className="button primary" type="button" disabled={running || gateway !== 'configured'} onClick={() => void run(true)}>
               {running && anyone.state !== 'skipped' ? <LoaderCircle size={17} className="spin" aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
-              {running && anyone.state !== 'skipped' ? 'Comparing paths…' : 'Compare both paths'}
+              {running && anyone.state !== 'skipped' ? 'Comparing paths…' : 'Compare live paths'}
             </button>
             <button className="button secondary" type="button" disabled={running} onClick={() => void run(false)}>
               {running && anyone.state === 'skipped' && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
               Direct test only
             </button>
           </div>
-          <p className="action-note">The direct test shares your current public IP and a random test ID with httpbingo.org.</p>
+          <p className="action-note">The direct test shares your public IP with httpbingo.org. Each request has a separate random ID, and the results are paired in this tab.</p>
 
           <div className="result-grid" aria-live="polite">
             <ResultCard measurement={direct} />
             <ResultCard anyone measurement={anyone} />
+            <article className="result-card result-card-planned">
+              <div className="result-header">
+                <span className="icon-box"><Cpu size={20} aria-hidden="true" /></span>
+                <h3>Anyone in the browser</h3>
+                <span className="badge">Planned</span>
+              </div>
+              <p className="result-label">The Anyone client would run in this tab with WebAssembly, without a separate app to install.</p>
+              <a className="planned-link" href="#wasm-method">See the planned path <ArrowRight size={15} aria-hidden="true" /></a>
+            </article>
           </div>
 
           {!running && directResult && anyoneResult && (
@@ -292,7 +306,7 @@ export default function Home() {
           )}
 
           <div className="report-row">
-            <p>{testId ? <>Test ID <code>{testId}</code></> : 'Results appear here after you run a test.'}</p>
+            <p>{hasResults ? 'Each measurement includes its own test ID in the report.' : 'Results can be exported after a measurement.'}</p>
             <div className="report-actions">
               <button type="button" className="button quiet" disabled={!hasResults || running} onClick={() => void copy()}><Copy size={16} aria-hidden="true" /> Copy</button>
               <button type="button" className="button quiet" disabled={!hasResults || running} onClick={download}><Download size={16} aria-hidden="true" /> JSON</button>
@@ -306,7 +320,7 @@ export default function Home() {
             <div>
               <div className="eyebrow">Test method</div>
               <h2 id="method-title">Where each request goes</h2>
-              <p>httpbingo.org echoes the source IP and test URL. The lab checks that the test ID matches before displaying a result.</p>
+              <p>httpbingo.org echoes the source IP and test URL. Each response must match the ID sent for that path.</p>
             </div>
           </div>
 
@@ -316,21 +330,29 @@ export default function Home() {
               <div className="path" aria-label="Your browser to httpbingo.org">
                 <span>Your browser</span><ArrowRight size={16} aria-hidden="true" /><span><Globe size={15} aria-hidden="true" /> httpbingo.org</span>
               </div>
-              <p>Your browser connects directly to the test endpoint. It sees the public IP of your current connection, which may be a VPN exit IP.</p>
+              <p>Your browser connects directly to the test endpoint. It sees the public IP of your current connection, which may be a VPN exit IP. The lab serves this page but does not receive the direct test request.</p>
             </article>
             <article className="panel method-card">
-              <div className="method-heading"><span className="icon-box"><Route size={20} aria-hidden="true" /></span><h3>Anyone request</h3></div>
+              <div className="method-heading"><span className="icon-box"><Route size={20} aria-hidden="true" /></span><h3>Anyone via lab server</h3></div>
               <div className="path" aria-label="Your browser to the lab server, then through an Anyone exit relay to httpbingo.org">
                 <span>Your browser</span><ArrowRight size={16} aria-hidden="true" /><span>Lab server</span><ArrowRight size={16} aria-hidden="true" /><span>Anyone exit</span><ArrowRight size={16} aria-hidden="true" /><span><Globe size={15} aria-hidden="true" /> httpbingo.org</span>
               </div>
-              <p>Your browser sends the test ID to this lab. The lab’s native Anyone Rust client makes the HTTPS request through the Anyone network. The endpoint sees the exit relay’s IP.</p>
+              <p>The lab receives your browser connection and the ID for this path. Its native Anyone Rust client makes the HTTPS request. The endpoint sees the exit relay’s IP.</p>
+            </article>
+            <article className="panel method-card method-card-planned" id="wasm-method">
+              <div className="method-heading"><span className="icon-box"><Cpu size={20} aria-hidden="true" /></span><h3>Anyone in the browser</h3><span className="badge">Planned</span></div>
+              <div className="path" aria-label="Proposed path from the browser WASM client through Anyone to httpbingo.org">
+                <span>WASM client in your tab</span><ArrowRight size={16} aria-hidden="true" /><span>Anyone exit</span><ArrowRight size={16} aria-hidden="true" /><span><Globe size={15} aria-hidden="true" /> httpbingo.org</span>
+              </div>
+              <p>The tab would make the test request through Anyone. The lab would still serve the page, and a browser transport bridge, if needed, could see your incoming IP. The endpoint would see the exit relay’s IP.</p>
+              <a className="planned-link" href={wasmRoadmap} target="_blank" rel="noreferrer">Anyone WASM roadmap <ArrowUpRight size={14} aria-hidden="true" /></a>
             </article>
           </div>
 
           <div className="notes">
             <details>
               <summary>What does the result show?<ArrowDown size={16} aria-hidden="true" /></summary>
-              <p>The comparison applies to these two requests. The Anyone result comes from the lab gateway, and the diagram shows the route in general terms. Your other browser traffic continues to use its usual connection.</p>
+              <p>The two live measurements apply to the requests made by this test. The Anyone result comes from the lab gateway. Your other browser traffic continues to use its usual connection.</p>
             </details>
             <details>
               <summary>How should I read the timings?<ArrowDown size={16} aria-hidden="true" /></summary>
@@ -338,7 +360,7 @@ export default function Home() {
             </details>
             <details>
               <summary>What data is shared?<ArrowDown size={16} aria-hidden="true" /></summary>
-              <p>The destination sees the test ID, source IP and standard HTTP metadata. The lab processes the ID for the Anyone request. Hosting and test infrastructure may keep operational logs. Results are displayed in this tab and can be exported as JSON.</p>
+              <p>The destination sees each request’s own test ID, source IP and standard HTTP metadata. The two requests carry no shared test ID. Other signals, such as timing, can still make requests linkable. Hosting and test infrastructure may keep operational logs.</p>
             </details>
           </div>
         </section>

@@ -124,12 +124,13 @@ h3 { font-size: 1.03rem; line-height: 1.25; }
 .quiet { min-height: 36px; padding: 5px 10px; }
 .action-note { margin-top: 9px; font-size: .8rem; }
 
-.result-grid, .method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.result-grid, .method-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .result-grid { margin-top: 19px; }
 .result-card { min-width: 0; padding: clamp(14px, 2vw, 19px); border: 1px solid var(--line); border-radius: 9px; background: var(--inset); }
 .result-card-anyone { border-color: #3b544e; background: #14221f; }
+.result-card-planned, .method-card-planned { border-style: dashed; }
 .result-header { display: flex; align-items: center; gap: 10px; }
-.result-header .badge { margin-left: auto; }
+.result-header .badge, .method-heading .badge { flex: none; margin-left: auto; }
 
 .icon-box {
   display: inline-grid;
@@ -142,7 +143,9 @@ h3 { font-size: 1.03rem; line-height: 1.25; }
   color: var(--teal);
 }
 
-.result-card-anyone .icon-box, .method-card:last-child .icon-box { background: #243a32; color: var(--mint); }
+.result-card-anyone .icon-box, .method-card:nth-child(2) .icon-box { background: #243a32; color: var(--mint); }
+.planned-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; color: var(--mint); font-size: .8rem; }
+.planned-link:hover { text-decoration: underline; }
 .result-label { margin-top: 14px; font-size: .8rem; }
 
 .result-ip {
@@ -176,7 +179,6 @@ h3 { font-size: 1.03rem; line-height: 1.25; }
 .comparison-warning { border-color: #5b4e36; background: #2c2a23; color: var(--warning); }
 .report-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
 .report-row p, .report-notice { font-size: .78rem; overflow-wrap: anywhere; }
-.report-row code { color: var(--text); margin-left: 4px; }
 .report-actions { display: flex; gap: 7px; }
 .report-notice { margin-top: 7px; }
 
@@ -203,9 +205,14 @@ h3 { font-size: 1.03rem; line-height: 1.25; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+@media (max-width: 900px) {
+  .result-grid, .method-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .result-card-planned, .method-card-planned { grid-column: 1 / -1; }
+}
+
 @media (max-width: 680px) {
   .section-heading { flex-direction: column; }
-  .method-grid { grid-template-columns: 1fr; }
+  .result-grid, .method-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 470px) {
@@ -215,7 +222,6 @@ h3 { font-size: 1.03rem; line-height: 1.25; }
   .brand span { padding-left: 8px; font-size: .8rem; }
   nav { font-size: .8rem; }
   nav a:first-child { display: none; }
-  .result-grid { grid-template-columns: 1fr; }
   .actions .button { flex: 1 1 auto; }
 }
 

@@ -6,7 +6,7 @@ A standalone tech demo for the Anyone network. Compare the source IP an HTTPS en
 
 The [installation guide](docs/proxmox-lxc.md) walks you through creating a Debian 13 LXC on amd64 and running a live test. Docker Compose starts the website, Caddy, the gateway, and the Anyone client in a single unprivileged LXC. Caddy is the only service with published ports. The gateway and SOCKS proxy stay on the internal Docker network.
 
-The direct test sends a request from your browser to `httpbingo.org`. For the Anyone test, the website accepts a test ID and forwards it to the internal gateway. The gateway requests the same fixed HTTPS endpoint through SOCKS, with DNS resolution handled by the proxy. The results show what the test endpoint reports. The diagram illustrates the general route. The website, gateway, and native Rust client all run inside the LXC.
+The direct test sends a request from your browser to `httpbingo.org`. For the Anyone test, the website forwards a separate test ID to the internal gateway. The gateway requests the same fixed HTTPS endpoint through SOCKS, with DNS resolution handled by the proxy. The tab pairs the results locally. The website, gateway, and native Rust client all run inside the LXC. The interface also describes a planned browser WASM path, which is outside the live comparison.
 
 ## Development
 
