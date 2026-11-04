@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown, ArrowRight, ArrowUpRight, CircleAlert, CircleCheck, Copy, Download,
@@ -225,10 +226,10 @@ export default function Home() {
     <>
       <header className="topbar">
         <div className="shell topbar-inner">
-          <a className="brand" href="/" aria-label="Anyone Privacy Lab home">
+          <Link className="brand" href="/" aria-label="Anyone Privacy Lab home">
             <Image src="/anyone-logo-white.png" alt="" width={106} height={28} unoptimized priority />
             <span>Privacy Lab</span>
-          </a>
+          </Link>
           <nav aria-label="Main navigation">
             <a href="#test">Run a test</a>
             <a href="#method">How it works</a>
