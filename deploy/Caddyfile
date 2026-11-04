@@ -9,5 +9,8 @@
 		max_size 256
 	}
 
+	@imageOptimizer path /_next/image /_next/image/*
+	respond @imageOptimizer 404
+
 	reverse_proxy web:3000
 }
