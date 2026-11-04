@@ -52,7 +52,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(413, {'error':'body_size'})
             self.connection.settimeout(10)
             data = json.loads(self.rfile.read(length))
-            nonce = data.get('nonce','')
+            nonce = data.get('nonce', '') if isinstance(data, dict) else None
             if not isinstance(nonce,str) or not re.fullmatch(r'[a-f0-9-]{36}', nonce):
                 raise ValueError()
         except (ValueError, TypeError, TimeoutError):

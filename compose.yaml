@@ -1,0 +1,79 @@
+name: privacy-lab
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  logging:
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  caddy:
+    <<: *service-defaults
+    image: caddy:2-alpine
+    environment:
+      LAB_ORIGIN: ${LAB_ORIGIN:?Set LAB_ORIGIN to the browser-facing URL}
+      NO_PROXY: web,localhost,127.0.0.1
+      no_proxy: web,localhost,127.0.0.1
+    ports:
+      - "${LAB_BIND_IP:?Set LAB_BIND_IP to the LXC IPv4 address}:80:80"
+      - "${LAB_BIND_IP}:443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+    networks:
+      - frontend
+
+  web:
+    <<: *service-defaults
+    build: .
+    environment:
+      LAB_ORIGIN: ${LAB_ORIGIN:?Set LAB_ORIGIN to the browser-facing URL}
+      NO_PROXY: gateway,localhost,127.0.0.1
+      no_proxy: gateway,localhost,127.0.0.1
+      ANYONE_GATEWAY_URL: http://gateway:8080
+      ANYONE_GATEWAY_TOKEN: ${GATEWAY_TOKEN:?Generate a random token with openssl rand -hex 32}
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      - gateway
+    networks:
+      - frontend
+      - backend
+
+  gateway:
+    <<: *service-defaults
+    build: ./gateway
+    environment:
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN:?Generate a random token with openssl rand -hex 32}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      - anyone
+    networks:
+      - backend
+
+  anyone:
+    <<: *service-defaults
+    image: ${ANYONE_IMAGE:-ghcr.io/anyone-protocol/anyone-rust@sha256:ee4eb0324e4421fb8429bd510e55d9b4a17047eaf3d61cae380ea6b31687c0c9}
+    command: ["proxy", "${ANYONE_TERMS_FLAG:?Review https://anyone.io/terms before setting ANYONE_TERMS_FLAG}"]
+    volumes:
+      - anyone-state:/var/lib/anyone-rust
+    networks:
+      - backend
+      - uplink
+
+networks:
+  frontend:
+  backend:
+    internal: true
+  uplink:
+
+volumes:
+  anyone-state:
+  caddy-data:
+  caddy-config:

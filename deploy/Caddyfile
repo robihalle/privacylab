@@ -1,0 +1,13 @@
+{$LAB_ORIGIN} {
+	header {
+		Referrer-Policy no-referrer
+		X-Content-Type-Options nosniff
+	}
+
+	@labTest path /api/lab/test
+	request_body @labTest {
+		max_size 256
+	}
+
+	reverse_proxy web:3000
+}
