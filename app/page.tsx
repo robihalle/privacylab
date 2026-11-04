@@ -1,44 +1,352 @@
 'use client';
-import {useEffect,useState} from 'react';
-import {ArrowUpRight,ArrowRight,Play,Check,Copy,Download,Shield,Globe,Monitor,Server,Route,Terminal,Info,X,Activity,ChevronDown,ExternalLink,LoaderCircle} from 'lucide-react';
-type Result={ip:string;nonce:string;elapsedMs:number;at:string;transport:string;target:string;gatewayRoundtripMs?:number};
-const stages=[{title:'Your browser',icon:Monitor,text:'The direct test sends an HTTPS request from your browser to httpbingo.org. The service sees your public IP address or the exit IP of your VPN if you use one.'},{title:'Demo gateway',icon:Server,text:'For the Anyone test, the web server forwards the test ID to the internal gateway in the same LXC. The gateway uses the native Rust client and acts as a trusted intermediary for this request.'},{title:'Anyone network',icon:Route,text:'The gateway sends the test request exclusively through the Anyone client’s SOCKS proxy. The diagram illustrates the path in general terms.'},{title:'Test endpoint',icon:Globe,text:'httpbingo.org returns the source IP it observed and the URL containing the test ID. The lab checks that the ID matches. Verifying the Anyone circuit independently would require additional evidence.'}];
-export default function Home(){
- const [configured,setConfigured]=useState<boolean|null>(null),[direct,setDirect]=useState<Result|null>(null),[anon,setAnon]=useState<Result|null>(null),[busy,setBusy]=useState(false),[errors,setErrors]=useState<Record<string,string>>({}),[stage,setStage]=useState(2),[mode,setMode]=useState<'direct'|'compare'>('direct'),[runs,setRuns]=useState(0),[setup,setSetup]=useState(false),[copied,setCopied]=useState(false),[statusError,setStatusError]=useState(false),[log,setLog]=useState<string[]>(['Ready. Start a test to see its request log.']);
- const refresh=()=>{setStatusError(false);fetch('/api/lab/status',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error();return r.json()}).then(d=>setConfigured((d as {configured:boolean}).configured)).catch(()=>{setConfigured(null);setStatusError(true)})};
- useEffect(()=>{refresh()},[]);
- useEffect(()=>{if(!setup)return;const prev=document.activeElement as HTMLElement;const cb=(e:KeyboardEvent)=>{if(e.key==='Escape')setSetup(false);if(e.key==='Tab'){const nodes=Array.from(document.querySelectorAll<HTMLElement>('.modal button,.modal a[href]'));const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}};window.addEventListener('keydown',cb);return()=>{window.removeEventListener('keydown',cb);prev?.focus()}},[setup]);
- const append=(line:string)=>setLog(l=>[...l,line]);
- async function run(){
-  if(busy)return;setBusy(true);setErrors({});setDirect(null);setAnon(null);setLog([]);const nonce=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/,'$1-$2-$3-$4-$5');append('Test started · '+nonce.slice(0,8));
-  const tasks=[(async()=>{try{append('Direct: Sending an HTTPS request to httpbingo.org …');const start=performance.now();const response=await fetch('https://httpbingo.org/anything/'+nonce,{cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('The test endpoint returned HTTP '+response.status+'.');const data=await response.json() as {url?:string;origin?:string};if(typeof data.url!=='string'||new URL(data.url).pathname!=='/anything/'+nonce||typeof data.origin!=='string'||!data.origin.trim())throw Error('The response is missing the expected test ID or IP address.');setDirect({ip:data.origin,nonce,elapsedMs:Math.round(performance.now()-start),at:new Date().toISOString(),transport:'browser-https',target:'httpbingo.org'});append('Direct: Response received · Test ID matched.');}catch(e){setErrors(x=>({...x,direct:e instanceof Error?e.message:'The direct test failed.'}));append('Direct: The test could not be completed.');}})()];
-  if(mode==='compare'&&configured){tasks.push((async()=>{try{append('Anyone: Sending a request to the gateway …');const response=await fetch('/api/lab/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nonce}),signal:AbortSignal.timeout(50000)});const data=await response.json() as Result & {error?:string};if(!response.ok)throw Error(data.error||'The gateway is unreachable.');if(data.nonce!==nonce)throw Error('The test ID does not match.');setAnon(data);append('Anyone: Gateway response received · Test ID matched.');}catch(e){setErrors(x=>({...x,anyone:e instanceof Error?e.message:'The Anyone test failed.'}));append('Anyone: The test could not be completed.');}})())}
-  await Promise.allSettled(tasks);setRuns(x=>x+1);setBusy(false);append('Test complete. These results apply to this run.');
- }
- const report={lab:'Anyone Privacy Lab',version:1,direct,anyone:anon,errors,limitations:['Native Rust client alongside the web server and gateway in the LXC.','Gateway-reported routing; circuit and exit membership not independently verified.','Direct timing includes browser-to-target; Anyone timing measures gateway SOCKS request.']};
- function download(){const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='anyone-privacy-test.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
- async function copy(){try{await navigator.clipboard.writeText(JSON.stringify(report,null,2));setCopied(true);setTimeout(()=>setCopied(false),2000)}catch{append('Clipboard access is unavailable. Download the JSON report instead.')}}
- return <><header className="header"><a className="brand" href="/" aria-label="Anyone Privacy Lab home"><span className="logo">a<span>·</span></span><b>anyone<span className="brand-light"> / privacy lab</span></b></a><nav><a href="#experiment">Experiment</a><a href="#method">How it works</a><a href="https://github.com/anyone-protocol/anyone-rust" target="_blank" rel="noreferrer">Rust client <ArrowUpRight size={14}/></a></nav><span className="community">COMMUNITY EXPERIMENT <span>01</span></span></header>
- <main><section className="hero"><div><div className="eyebrow"><span className="tiny-square"/> PRIVACY, MADE VISIBLE</div><h1>One request.<br/>A different <em>perspective.</em></h1><p>What does a server see when you connect to it?<br className="desktop"/> Find out with a live connection test.</p><div className="hero-meta"><span><Terminal size={14}/> Rust-powered gateway</span><span><Shield size={14}/> No wallet required</span><span>Open-source foundation <ArrowUpRight size={13}/></span></div></div><div className="hero-note"><span className="note-number">01 / LAB</span><div className="orb" aria-hidden="true"><span/><span/><span/><i/><b>IP</b></div><p>Same request.<br/><strong>A different source IP.</strong></p></div></section>
- <section id="experiment" className="experiment"><div className="section-heading"><div><span className="eyebrow">THE EXPERIMENT</span><h2>See your connection.</h2></div><div className={'gateway-state '+(configured?'connected':'')}><span/>{configured?'Gateway configured':statusError?'Status unavailable':configured===null?'Checking status':'Gateway setup pending'}</div></div>
- <div className="lab-layout"><div className="workspace"><div className="toolbar"><div className="tabs" role="group" aria-label="Test mode"><button aria-pressed={mode==='direct'} className={mode==='direct'?'active':''} onClick={()=>setMode('direct')} disabled={busy}>Direct test</button><button aria-pressed={mode==='compare'} className={mode==='compare'?'active':''} onClick={()=>setMode('compare')} disabled={busy}>Anyone comparison {!configured&&<span className="small-tag">GATEWAY</span>}</button></div><span className="request-label">HTTPS / GET</span></div>
- <div className="destination"><Globe size={19}/><div><small>FIXED TEST ENDPOINT</small><span>httpbingo.org<span className="muted"> / anything / test-id</span></span></div><a href="https://httpbingo.org" target="_blank" rel="noreferrer" aria-label="Open the test endpoint"><ArrowUpRight size={18}/></a></div>
- <div className="result-grid"><div className="result"><div className="result-label"><Monitor size={16}/> DIRECT <span className={direct?'result-status success':'result-status'}>{direct?'Measured':busy?'Request in progress':errors.direct?'Error':'Ready'}</span></div><small>Public IP seen by the test endpoint</small><div className={'ip '+(!direct?'empty':'')}>{direct?.ip||'Waiting for a test'}</div><div className="result-bottom"><span>{direct?`${direct.elapsedMs.toLocaleString('en-US')} ms`:'— ms'}<small>Browser → Test endpoint</small></span><span className="transport">HTTPS</span></div>{errors.direct&&<p className="error">{errors.direct}</p>}</div>
- <div className="result anyone"><div className="result-label"><Route size={16}/> VIA ANYONE <span className={anon?'result-status success':'result-status'}>{anon?'Reported by gateway':!configured?'Setup pending':busy&&mode==='compare'?'Request in progress':'Ready'}</span></div><small>Exit IP reported by the gateway</small><div className={'ip '+(!anon?'empty':'')}>{anon?.ip||'Waiting for the Anyone test'}</div><div className="result-bottom"><span>{anon?`${anon.elapsedMs.toLocaleString('en-US')} ms`:'— ms'}<small>Gateway → SOCKS → Test endpoint</small></span><span className="transport">RUST CLIENT</span></div>{errors.anyone&&<p className="error">{errors.anyone}</p>}</div></div>
- {direct&&anon&&<div className="comparison"><Check size={17}/>{direct.ip===anon.ip?'The test endpoint saw the same source IP on both paths.':'The test endpoint saw different source IPs on the two paths.'}</div>}
- {mode==='compare'&&!configured&&<div className="inline-note"><Info size={17}/><p>The internal Anyone gateway still needs to be configured. You can run the direct test now. <button onClick={()=>setSetup(true)}>View setup instructions <ArrowUpRight size={12}/></button></p></div>}
- <div className="run-area"><button className="run-button" onClick={run} disabled={busy||mode==='compare'&&!configured}>{busy?<LoaderCircle size={17} className="spin"/>:<Play size={15} fill="currentColor"/>}{busy?'Testing …':mode==='direct'?'Start direct test':'Test both paths'}<ArrowRight size={18}/></button><p>The direct test shares your public IP and a random test ID with httpbingo.org. No wallet access is required.</p></div>
- <div className="console"><div className="console-heading"><span><Terminal size={14}/> REQUEST LOG</span><span>{runs.toString().padStart(2,'0')} TESTS THIS SESSION</span></div><div className="log-lines" role="log" aria-live="polite">{log.map((l,i)=><div key={i}><span>{String(i+1).padStart(2,'0')}</span>{l}</div>)}</div></div>
- <div className="report-bar"><span><span className="status-dot"/> {direct||anon?'Results are stored in this browser session':'Results appear after a test'}</span><div><button onClick={copy} disabled={!direct&&!anon} aria-label="Copy the test report">{copied?<Check size={15}/>:<Copy size={15}/>} {copied?'Copied':'Copy'}</button><button onClick={download} disabled={!direct&&!anon}><Download size={15}/> JSON</button></div></div></div>
- <aside className="explainer"><span className="eyebrow">WHAT YOU MEASURE</span><h3>The IP address<br/>a server sees.</h3><p>A destination server sees the source IP of an incoming request. For requests routed through a privacy network, that may be the IP address of an exit relay.</p><div className="aside-rule"/><div className="side-item"><span>01</span><p><strong>Live responses</strong>Every successful test includes the test ID returned by the endpoint.</p></div><div className="side-item"><span>02</span><p><strong>Gateway trust</strong>The Rust client runs alongside the gateway. Only the designated Anyone test request uses it.</p></div><div className="side-item"><span>03</span><p><strong>Illustrated route</strong>The diagram shows the general route. Live relay connections are outside its scope.</p></div><a className="text-link" href="#method">See the methodology <ArrowRight size={16}/></a></aside></div></section>
- <section className="route-section" id="method"><div className="route-top"><div><span className="eyebrow">UNDER THE HOOD</span><h2>Where your test request goes.</h2></div><span className="schema-tag">ILLUSTRATED ROUTE</span></div><div className="route-nodes">{stages.map((s,i)=><button key={s.title} className={'route-node '+(stage===i?'selected':'')} onClick={()=>setStage(i)} aria-pressed={stage===i}><span className="node-icon"><s.icon size={26}/></span><small>0{i+1}</small><strong>{s.title}</strong><span className="node-sub">{['Browser / HTTPS','Native Rust client','Multiple relays','Observed source IP'][i]}</span></button>)}</div><div className="route-detail"><span>0{stage+1}</span><p><strong>{stages[stage].title}</strong>{stages[stage].text}</p></div></section>
- <section className="notes-section"><div><span className="eyebrow">ABOUT THE LAB</span><h2>How to read<br/>the results.</h2><p>An independent community demo by Robert.</p></div><div className="faqs">{[
- ['Does this demo use WebAssembly in the browser?','The Anyone test uses native Rust. The client runs in the same LXC as the website and gateway. Your browser renders the interface and runs the direct test.'],
- ['How should I compare response times?','The direct result measures the request from your browser to the test endpoint. The Anyone result measures the SOCKS request from the gateway. The two paths differ in location, connection setup, and network load. The JSON report also includes the gateway round-trip time when available.'],
- ['What data does the test process?','The direct test sends a random test ID to httpbingo.org. The service sees the public source IP and standard HTTP metadata. In Anyone mode, the gateway also processes the test ID. The hosting infrastructure and test service may keep operational logs. The app keeps results in the browser until you reload the page. You can keep a copy by downloading the report.'],
- ['What does a different IP tell me?','A different IP shows that the request reached the test endpoint from a different address. The Anyone result is based on the configured gateway and its Rust client’s SOCKS transport. Independent verification of the circuit or its exit relay would require additional evidence.']
- ].map(([q,a])=><details key={q}><summary>{q}<ChevronDown size={17}/></summary><p>{a}</p></details>)}</div></section>
- <footer><a className="brand" href="/"><span className="logo small">a<span>·</span></span><b>anyone <span className="brand-light">/ privacy lab</span></b></a><span>OBSERVE. UNDERSTAND. VERIFY.</span><a href="https://github.com/anyone-protocol/anyone-rust" target="_blank" rel="noreferrer">Built on Anyone Rust <ArrowUpRight size={14}/></a></footer></main>
- {setup&&<div className="modal-backdrop" onClick={()=>setSetup(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="setup-title" onClick={e=>e.stopPropagation()}><button className="close" autoFocus aria-label="Close" onClick={()=>setSetup(false)}><X/></button><span className="eyebrow">GATEWAY SETUP</span><h2 id="setup-title">Set up the gateway<br/>to compare both paths.</h2><p>The website, gateway, and native Anyone client run in the same Proxmox LXC. The operator can check the services and the client’s bootstrap progress there.</p><a className="run-button" href="https://github.com/robihalle/privacylab/blob/main/docs/proxmox-lxc.md" target="_blank" rel="noreferrer">Open the Proxmox guide <ArrowUpRight size={17}/></a><button className="refresh" onClick={()=>{refresh();setSetup(false)}}>Check connection status again <ArrowRight size={16}/></button><p className="modal-note">The gateway token stays on the server. The gateway accepts test requests for one fixed endpoint.</p></section></div>}
- </>;
+
+import Image from 'next/image';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ArrowDown, ArrowRight, ArrowUpRight, CircleAlert, CircleCheck, Copy, Download,
+  Globe, LoaderCircle, Monitor, Play, RefreshCw, Route, ShieldCheck,
+} from 'lucide-react';
+
+const endpoint = 'https://httpbingo.org';
+const rustRepo = 'https://github.com/anyone-protocol/anyone-rust';
+
+type Result = {
+  ip: string;
+  nonce: string;
+  elapsedMs: number;
+  at: string;
+  transport: string;
+  target: string;
+  gatewayRoundtripMs?: number;
+};
+type Measurement =
+  | { state: 'idle' | 'running' | 'skipped' }
+  | { state: 'success'; result: Result }
+  | { state: 'error'; message: string };
+type Gateway = 'checking' | 'configured' | 'unconfigured' | 'unreachable';
+
+const statusLabels = {
+  idle: 'Waiting',
+  running: 'Measuring',
+  skipped: 'Skipped',
+  success: 'Measured',
+  error: 'Failed',
+};
+
+function errorMessage(error: unknown, path: 'direct' | 'anyone') {
+  if (error instanceof DOMException && error.name === 'TimeoutError') {
+    return path === 'direct' ? 'The test endpoint did not respond in time.' : 'The Anyone request timed out. Try the comparison again.';
+  }
+  if (error instanceof TypeError) {
+    return path === 'direct'
+      ? 'Your browser could not reach httpbingo.org. Check your connection or whether an extension blocks the request.'
+      : 'Your browser could not reach the lab API. Check your connection and retry.';
+  }
+  return error instanceof Error ? error.message : 'The request could not be completed.';
+}
+
+async function measureDirect(nonce: string): Promise<Result> {
+  const url = endpoint + '/anything/' + nonce;
+  const start = performance.now();
+  const response = await fetch(url, {
+    cache: 'no-store',
+    credentials: 'omit',
+    referrerPolicy: 'no-referrer',
+    redirect: 'error',
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error('The test endpoint returned HTTP ' + response.status + '.');
+  const data = await response.json() as { url?: string; origin?: string };
+  if (data?.url !== url || typeof data.origin !== 'string' || !data.origin.trim()) {
+    throw new Error('The test endpoint did not return the expected test ID and source IP.');
+  }
+  return {
+    ip: data.origin.trim(),
+    nonce,
+    elapsedMs: Math.round(performance.now() - start),
+    at: new Date().toISOString(),
+    transport: 'browser-https',
+    target: 'httpbingo.org',
+  };
+}
+
+async function measureAnyone(nonce: string): Promise<Result> {
+  const response = await fetch('/api/lab/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nonce }),
+    signal: AbortSignal.timeout(50_000),
+  });
+  const data = await response.json().catch(() => null) as (Result & { error?: string }) | null;
+  if (!response.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'The lab API returned HTTP ' + response.status + '.');
+  }
+  if (data?.nonce !== nonce || data.transport !== 'anyone-rust-socks5h' || data.target !== 'httpbingo.org' ||
+    typeof data.ip !== 'string' || !data.ip.trim() || !Number.isFinite(data.elapsedMs) || data.elapsedMs < 0) {
+    throw new Error('The gateway did not return a valid result for this test ID.');
+  }
+  return data;
+}
+
+async function measure(path: 'direct' | 'anyone', nonce: string): Promise<Measurement> {
+  try {
+    const result = await (path === 'direct' ? measureDirect(nonce) : measureAnyone(nonce));
+    return { state: 'success', result };
+  } catch (error) {
+    return { state: 'error', message: errorMessage(error, path) };
+  }
+}
+
+function ResultCard({ anyone = false, measurement }: { anyone?: boolean; measurement: Measurement }) {
+  const Icon = anyone ? Route : Monitor;
+  const result = measurement.state === 'success' ? measurement.result : null;
+  return (
+    <article className={'result-card' + (anyone ? ' result-card-anyone' : '')}>
+      <div className="result-header">
+        <span className="icon-box"><Icon size={20} aria-hidden="true" /></span>
+        <h3>{anyone ? 'Via Anyone' : 'Direct'}</h3>
+        <span className={'badge badge-' + measurement.state}>
+          {measurement.state === 'running' && <LoaderCircle size={13} className="spin" aria-hidden="true" />}
+          {statusLabels[measurement.state]}
+        </span>
+      </div>
+      <p className="result-label">{anyone ? 'Source IP seen from the exit relay' : 'Source IP seen from your browser'}</p>
+      <p className={'result-ip' + (result ? '' : ' result-ip-empty')}>{result?.ip ?? '—'}</p>
+      <div className="result-foot">
+        <span>{anyone ? 'Gateway through SOCKS' : 'Browser to endpoint'}</span>
+        {result && <strong>{result.elapsedMs.toLocaleString('en-US')} ms</strong>}
+      </div>
+      {measurement.state === 'error' && <p className="card-error">{measurement.message}</p>}
+      {measurement.state === 'skipped' && <p className="card-note">Run the comparison to measure this path.</p>}
+    </article>
+  );
+}
+
+export default function Home() {
+  const [gateway, setGateway] = useState<Gateway>('checking');
+  const [statusCheck, setStatusCheck] = useState(0);
+  const [direct, setDirect] = useState<Measurement>({ state: 'idle' });
+  const [anyone, setAnyone] = useState<Measurement>({ state: 'idle' });
+  const [running, setRunning] = useState(false);
+  const [testId, setTestId] = useState<string>();
+  const [reportNotice, setReportNotice] = useState('');
+  const runInProgress = useRef(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function checkGateway() {
+      try {
+        const response = await fetch('/api/lab/status', {
+          cache: 'no-store',
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]),
+        });
+        if (!response.ok) throw new Error('Status request failed.');
+        const data = await response.json() as { configured?: boolean };
+        if (typeof data?.configured !== 'boolean') throw new Error('Unexpected status response.');
+        if (!controller.signal.aborted) setGateway(data.configured ? 'configured' : 'unconfigured');
+      } catch {
+        if (!controller.signal.aborted) setGateway('unreachable');
+      }
+    }
+    void checkGateway();
+    return () => controller.abort();
+  }, [statusCheck]);
+
+  async function run(compare: boolean) {
+    if (runInProgress.current || (compare && gateway !== 'configured')) return;
+    runInProgress.current = true;
+    const nonce = crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)),
+      (byte) => byte.toString(16).padStart(2, '0')).join('').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+    setTestId(nonce);
+    setReportNotice('');
+    setRunning(true);
+    setDirect({ state: 'running' });
+    setAnyone({ state: compare ? 'running' : 'skipped' });
+    try {
+      await Promise.all([
+        measure('direct', nonce).then(setDirect),
+        compare && measure('anyone', nonce).then(setAnyone),
+      ]);
+    } finally {
+      runInProgress.current = false;
+      setRunning(false);
+    }
+  }
+
+  const directResult = direct.state === 'success' ? direct.result : null;
+  const anyoneResult = anyone.state === 'success' ? anyone.result : null;
+  const hasResults = Boolean(directResult || anyoneResult);
+  const hasError = direct.state === 'error' || anyone.state === 'error';
+
+  function report() {
+    return JSON.stringify({
+      lab: 'Anyone Privacy Lab',
+      version: 1,
+      direct: directResult,
+      anyone: anyoneResult,
+      errors: {
+        ...(direct.state === 'error' && { direct: direct.message }),
+        ...(anyone.state === 'error' && { anyone: anyone.message }),
+      },
+      limitations: [
+        'The Anyone request uses the native Rust client on the lab server.',
+        'The exit IP is reported by the gateway. The circuit is not independently verified.',
+        'Timings begin at the browser for Direct and at the gateway for Anyone.',
+      ],
+    }, null, 2);
+  }
+
+  function download() {
+    const url = URL.createObjectURL(new Blob([report()], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'anyone-privacy-test.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(report());
+      setReportNotice('Report copied.');
+    } catch {
+      setReportNotice('Clipboard unavailable. Download the JSON report instead.');
+    }
+  }
+
+  const gatewayLabels = {
+    checking: 'Checking gateway configuration',
+    configured: 'Gateway configured',
+    unconfigured: 'Gateway not configured',
+    unreachable: 'Gateway status unavailable',
+  };
+
+  return (
+    <>
+      <header className="topbar">
+        <div className="shell topbar-inner">
+          <a className="brand" href="/" aria-label="Anyone Privacy Lab home">
+            <Image src="/anyone-logo-white.png" alt="" width={106} height={28} unoptimized priority />
+            <span>Privacy Lab</span>
+          </a>
+          <nav aria-label="Main navigation">
+            <a href="#test">Run a test</a>
+            <a href="#method">How it works</a>
+          </nav>
+        </div>
+      </header>
+
+      <main className="shell">
+        <section className="intro" aria-labelledby="title">
+          <div className="eyebrow"><ShieldCheck size={16} aria-hidden="true" /> Independent community demo</div>
+          <h1 id="title">Anyone Privacy Lab</h1>
+          <p>See which IP address a website receives from your browser and which one it receives through the Anyone network.</p>
+        </section>
+
+        <section className="panel test-panel" id="test" aria-labelledby="test-title">
+          <div className="section-heading">
+            <div>
+              <h2 id="test-title">Compare your connection</h2>
+              <p>Both requests use HTTPS and the same test ID at <a href={endpoint} target="_blank" rel="noreferrer">httpbingo.org <ArrowUpRight size={13} aria-hidden="true" /></a>.</p>
+            </div>
+            <div className="gateway-status">
+              <span className={'badge gateway-' + gateway} role="status"><i />{gatewayLabels[gateway]}</span>
+              {(gateway === 'unconfigured' || gateway === 'unreachable') && (
+                <button className="icon-button" type="button" aria-label="Recheck gateway status" title="Recheck gateway status" onClick={() => {
+                  setGateway('checking');
+                  setStatusCheck((value) => value + 1);
+                }}><RefreshCw size={16} aria-hidden="true" /></button>
+              )}
+            </div>
+          </div>
+
+          <div className="actions">
+            <button className="button primary" type="button" disabled={running || gateway !== 'configured'} onClick={() => void run(true)}>
+              {running && anyone.state !== 'skipped' ? <LoaderCircle size={17} className="spin" aria-hidden="true" /> : <Play size={17} aria-hidden="true" />}
+              {running && anyone.state !== 'skipped' ? 'Comparing paths…' : 'Compare both paths'}
+            </button>
+            <button className="button secondary" type="button" disabled={running} onClick={() => void run(false)}>
+              {running && anyone.state === 'skipped' && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+              Direct test only
+            </button>
+          </div>
+          <p className="action-note">The direct test shares your current public IP and a random test ID with httpbingo.org.</p>
+
+          <div className="result-grid" aria-live="polite">
+            <ResultCard measurement={direct} />
+            <ResultCard anyone measurement={anyone} />
+          </div>
+
+          {!running && directResult && anyoneResult && (
+            <p className="comparison" role="status">
+              <CircleCheck size={19} aria-hidden="true" />
+              {directResult.ip === anyoneResult.ip ? 'The endpoint saw the same source IP on both paths.' : 'The endpoint saw different source IPs on the two paths.'}
+            </p>
+          )}
+          {!running && hasError && (
+            <p className="comparison comparison-warning" role="status">
+              <CircleAlert size={19} aria-hidden="true" />
+              {hasResults ? 'One path completed. See the other card for the error.' : 'The test could not be completed. See the cards for details.'}
+            </p>
+          )}
+
+          <div className="report-row">
+            <p>{testId ? <>Test ID <code>{testId}</code></> : 'Results appear here after you run a test.'}</p>
+            <div className="report-actions">
+              <button type="button" className="button quiet" disabled={!hasResults || running} onClick={() => void copy()}><Copy size={16} aria-hidden="true" /> Copy</button>
+              <button type="button" className="button quiet" disabled={!hasResults || running} onClick={download}><Download size={16} aria-hidden="true" /> JSON</button>
+            </div>
+          </div>
+          {reportNotice && <p className="report-notice" role="status">{reportNotice}</p>}
+        </section>
+
+        <section className="method" id="method" aria-labelledby="method-title">
+          <div className="section-heading">
+            <div>
+              <div className="eyebrow">Test method</div>
+              <h2 id="method-title">Where each request goes</h2>
+              <p>httpbingo.org echoes the source IP and test URL. The lab checks that the test ID matches before displaying a result.</p>
+            </div>
+          </div>
+
+          <div className="method-grid">
+            <article className="panel method-card">
+              <div className="method-heading"><span className="icon-box"><Monitor size={20} aria-hidden="true" /></span><h3>Direct request</h3></div>
+              <div className="path" aria-label="Your browser to httpbingo.org">
+                <span>Your browser</span><ArrowRight size={16} aria-hidden="true" /><span><Globe size={15} aria-hidden="true" /> httpbingo.org</span>
+              </div>
+              <p>Your browser connects directly to the test endpoint. It sees the public IP of your current connection, which may be a VPN exit IP.</p>
+            </article>
+            <article className="panel method-card">
+              <div className="method-heading"><span className="icon-box"><Route size={20} aria-hidden="true" /></span><h3>Anyone request</h3></div>
+              <div className="path" aria-label="Your browser to the lab server, then through an Anyone exit relay to httpbingo.org">
+                <span>Your browser</span><ArrowRight size={16} aria-hidden="true" /><span>Lab server</span><ArrowRight size={16} aria-hidden="true" /><span>Anyone exit</span><ArrowRight size={16} aria-hidden="true" /><span><Globe size={15} aria-hidden="true" /> httpbingo.org</span>
+              </div>
+              <p>Your browser sends the test ID to this lab. The lab’s native Anyone Rust client makes the HTTPS request through the Anyone network. The endpoint sees the exit relay’s IP.</p>
+            </article>
+          </div>
+
+          <div className="notes">
+            <details>
+              <summary>What does the result show?<ArrowDown size={16} aria-hidden="true" /></summary>
+              <p>The comparison applies to these two requests. The Anyone result comes from the lab gateway, and the diagram shows the route in general terms. Your other browser traffic continues to use its usual connection.</p>
+            </details>
+            <details>
+              <summary>How should I read the timings?<ArrowDown size={16} aria-hidden="true" /></summary>
+              <p>Direct measures the browser request. Anyone measures the gateway’s request through SOCKS. They start in different places, so the numbers describe the individual paths.</p>
+            </details>
+            <details>
+              <summary>What data is shared?<ArrowDown size={16} aria-hidden="true" /></summary>
+              <p>The destination sees the test ID, source IP and standard HTTP metadata. The lab processes the ID for the Anyone request. Hosting and test infrastructure may keep operational logs. Results are displayed in this tab and can be exported as JSON.</p>
+            </details>
+          </div>
+        </section>
+
+        <footer className="footer">
+          <span>Anyone Privacy Lab · Independent community demo by Robert</span>
+          <a href={rustRepo} target="_blank" rel="noreferrer">Anyone Rust client <ArrowUpRight size={15} aria-hidden="true" /></a>
+        </footer>
+      </main>
+    </>
+  );
 }
