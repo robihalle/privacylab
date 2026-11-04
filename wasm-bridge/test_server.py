@@ -83,7 +83,7 @@ class BridgePolicy(AioHTTPTestCase):
             self.assertEqual(await response.json(), {"ready": True})
         async with self.client.get("/wasm-lab/bootstrap", headers=HEADERS) as response:
             self.assertEqual(response.headers["X-Lab-Snapshot"], SECOND)
-            self.assertIn("max-age=60", response.headers["Cache-Control"])
+            self.assertIn("max-age=10", response.headers["Cache-Control"])
             self.assertEqual(await response.text(), SECOND)
             etag = response.headers["ETag"]
         async with self.client.get("/wasm-lab/bootstrap", headers={**HEADERS, "If-None-Match": etag}) as response:
@@ -114,11 +114,17 @@ class BridgePolicy(AioHTTPTestCase):
             acquire.assert_not_called()
 
     async def test_download_quota_is_separate_from_tunnels(self):
-        with patch("server.MinuteQuota.charge", return_value=False) as charge:
+        def admit_tunnels_only(quota, _key, _now):
+            return quota.global_limit is None
+
+        with (patch("server.MinuteQuota.charge", autospec=True, side_effect=admit_tunnels_only),
+              patch("server.asyncio.open_connection", side_effect=OSError) as dial):
             async with self.client.get("/wasm-lab/bootstrap", headers=HEADERS) as response:
                 self.assertEqual(response.status, 429)
                 self.assertEqual(response.headers["Retry-After"], "60")
-            charge.assert_called_once()
+            socket = await self.client.ws_connect("/wasm-lab/relay?target=8.8.8.8:9001", headers=HEADERS)
+            self.assertEqual((await socket.receive()).data, 1013)
+            dial.assert_awaited_once()
 
     async def test_only_the_matching_wasm_version_is_immutable(self):
         path = "/wasm-lab/tor_js_bg.wasm"
@@ -151,6 +157,7 @@ class BridgePolicy(AioHTTPTestCase):
     async def test_request_with_body_is_rejected(self):
         async with self.client.get("/wasm-lab/bootstrap", headers=HEADERS, data=b"x") as response:
             self.assertEqual(response.status, 400)
+
 
 class BridgeLimits(unittest.TestCase):
     def test_global_download_rate_limit(self):

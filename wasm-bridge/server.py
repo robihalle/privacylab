@@ -249,7 +249,7 @@ def make_app(state=STATE, artifacts=ARTIFACTS, origin=None):
         snapshot = directory.select(now)
         if snapshot is None:
             raise web.HTTPServiceUnavailable(text="Anyone bootstrap snapshot is unavailable.")
-        max_age = min(60, int((snapshot.valid_until - now).total_seconds()))
+        max_age = min(10, int((snapshot.valid_until - now).total_seconds()))
         return web.FileResponse(snapshot.archive, headers={
             "Content-Type": "application/octet-stream",
             "Cache-Control": f"public, max-age={max_age}, must-revalidate",
