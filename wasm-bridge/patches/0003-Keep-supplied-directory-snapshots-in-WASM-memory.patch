@@ -1,0 +1,174 @@
+From 6d43f2241a0bdfa178883fc2e39bf27f09a0ed1b Mon Sep 17 00:00:00 2001
+From: robihalle <robertmoebes@googlemail.com>
+Date: Wed, 4 Nov 2026 22:25:44 +0100
+Subject: [PATCH] Keep supplied directory snapshots in WASM memory
+
+---
+ crates/tor-js-wasm/src/lib.rs     |  8 ++++---
+ crates/tor-js-wasm/src/storage.rs | 37 ++++++++++++++++++++-----------
+ src/TorClient.ts                  |  5 +++--
+ src/types.ts                      |  4 ++--
+ 4 files changed, 34 insertions(+), 20 deletions(-)
+
+diff --git a/crates/tor-js-wasm/src/lib.rs b/crates/tor-js-wasm/src/lib.rs
+index ac19683..66b92f8 100644
+--- a/crates/tor-js-wasm/src/lib.rs
++++ b/crates/tor-js-wasm/src/lib.rs
+@@ -53,7 +53,7 @@ use arti_client::{IsolationToken, StreamPrefs, TorClient as ArtiTorClient, TorCl
+ use isolation::{IsolationGroups, KeyError, MAX_KEY_LEN};
+ use serde::Deserialize;
+ use crate::runtime::WasmRuntime;
+-use tracing::{debug, info, error};
++use tracing::{debug, info};
+ use tracing_subscriber::layer::SubscriberExt;
+ use tracing_subscriber::util::SubscriberInitExt;
+ use wasm_bindgen::prelude::*;
+@@ -448,8 +448,10 @@ async fn create_client(options: TorClientOptions) -> Result<TorClient, JsValue>
+ 
+         builder = builder.storage(cached_storage);
+         info!("Storage configured (state + directory cache)");
+-    } else {
+-        error!("Storage not configured");
++    } else if let Some(callback) = options.fast_bootstrap {
++        let cached_storage = CachedJsStorage::in_memory();
++        fast_bootstrap::maybe_fast_bootstrap(&cached_storage, callback, trusted_authorities).await?;
++        builder = builder.storage(cached_storage);
+     }
+ 
+     let tor_client = builder
+diff --git a/crates/tor-js-wasm/src/storage.rs b/crates/tor-js-wasm/src/storage.rs
+index b1f98aa..afe38e5 100644
+--- a/crates/tor-js-wasm/src/storage.rs
++++ b/crates/tor-js-wasm/src/storage.rs
+@@ -190,7 +190,7 @@ impl JsStorage {
+ /// always be granted. See addLocking.
+ pub struct CachedJsStorage {
+     /// The underlying JS storage (for async write-back).
+-    js_storage: JsStorage,
++    js_storage: Option<JsStorage>,
+     /// In-memory cache for sync reads.
+     cache: Arc<RwLock<HashMap<String, String>>>,
+     /// Whether we currently hold the write lock.
+@@ -236,19 +236,25 @@ impl CachedJsStorage {
+             ))
+         })?;
+ 
++        let storage = Self::empty(Some(js_storage));
++        storage.preload_all().await?;
++        Ok(storage)
++    }
++
++    pub(crate) fn in_memory() -> Self {
++        Self::empty(None)
++    }
++
++    fn empty(js_storage: Option<JsStorage>) -> Self {
+         let (drop_tx, drop_rx) = tor_async_utils::oneshot::channel();
+         let drop_rx = drop_rx.shared();
+-        let storage = Self {
++        Self {
+             js_storage,
+             cache: Arc::new(RwLock::new(HashMap::new())),
+             locked: Arc::new(RwLock::new(true)),
+             drop_tx: Some(drop_tx),
+             drop_rx,
+-        };
+-
+-        storage.preload_all().await?;
+-
+-        Ok(storage)
++        }
+     }
+ 
+     /// Pre-load all data from JS storage into the cache.
+@@ -256,8 +262,9 @@ impl CachedJsStorage {
+     /// Uses bulk `getAll()` to fetch all key-value pairs per prefix in a single
+     /// JS call, avoiding thousands of sequential WASM-JS round-trips.
+     async fn preload_all(&self) -> Result<(), JsValue> {
+-        let state_entries = self.js_storage.get_all("state:").await?;
+-        let dir_entries = self.js_storage.get_all("dir:").await?;
++        let Some(js_storage) = &self.js_storage else { return Ok(()) };
++        let state_entries = js_storage.get_all("state:").await?;
++        let dir_entries = js_storage.get_all("dir:").await?;
+ 
+         let mut cache = self
+             .cache
+@@ -276,7 +283,7 @@ impl CachedJsStorage {
+ 
+     /// Schedule an async write to JS storage.
+     fn schedule_persist(&self, key: String, value: String) {
+-        let js_storage = self.js_storage.clone();
++        let Some(js_storage) = self.js_storage.clone() else { return };
+         wasm_bindgen_futures::spawn_local(async move {
+             if let Err(e) = js_storage.set(&key, &value).await {
+                 tracing::warn!("CachedJsStorage: failed to persist key {}: {:?}", key, e);
+@@ -293,12 +300,16 @@ impl CachedJsStorage {
+                 .cache
+                 .write()
+                 .map_err(|_| -> StorageError { "cache lock poisoned".into() })?;
++            if self.js_storage.is_none() {
++                cache.extend(entries);
++                return Ok(());
++            }
+             for (k, v) in &entries {
+                 cache.insert(k.clone(), v.clone());
+             }
+         }
+ 
+-        let js_storage = self.js_storage.clone();
++        let Some(js_storage) = self.js_storage.clone() else { return Ok(()) };
+         wasm_bindgen_futures::spawn_local(async move {
+             for (key, value) in entries {
+                 if let Err(e) = js_storage.set(&key, &value).await {
+@@ -311,7 +322,7 @@ impl CachedJsStorage {
+ 
+     /// Schedule an async delete from JS storage.
+     fn schedule_delete(&self, key: String) {
+-        let js_storage = self.js_storage.clone();
++        let Some(js_storage) = self.js_storage.clone() else { return };
+         wasm_bindgen_futures::spawn_local(async move {
+             if let Err(e) = js_storage.delete(&key).await {
+                 tracing::warn!("CachedJsStorage: failed to delete key {}: {:?}", key, e);
+@@ -322,7 +333,7 @@ impl CachedJsStorage {
+ 
+ impl Drop for CachedJsStorage {
+     fn drop(&mut self) {
+-        let js_storage = self.js_storage.clone();
++        let Some(js_storage) = self.js_storage.clone() else { return };
+         let drop_tx = self.drop_tx.take();
+         wasm_bindgen_futures::spawn_local(async move {
+             if let Err(e) = js_storage.unlock().await {
+diff --git a/src/TorClient.ts b/src/TorClient.ts
+index 142948f..76351f7 100644
+--- a/src/TorClient.ts
++++ b/src/TorClient.ts
+@@ -83,8 +83,9 @@ export class TorClient {
+       (addr: string) => sp.connect(addr),
+     );
+ 
+-    const storage = options.storage ?? createAutoStorage();
+-    wasmOptions = wasmOptions.withStorage(storage);
++    if (options.storage !== null) {
++      wasmOptions = wasmOptions.withStorage(options.storage ?? createAutoStorage());
++    }
+ 
+     // Fast bootstrap from a snapshot the caller supplies, else from the
+     // gateway when one is configured. The archive is zstd-compressed; the
+diff --git a/src/types.ts b/src/types.ts
+index d760d12..ff01fe1 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -32,8 +32,8 @@ export type TorClientOptions = {
+    */
+   log?: Log;
+ 
+-  /** Optional storage for persistent state (implements TorStorage). */
+-  storage?: TorStorage;
++  /** Use null to keep state solely in the WASM client's memory. */
++  storage?: TorStorage | null;
+ 
+   /**
+    * Minimum log level for this client's log listener. Defaults to 'debug'.
+-- 
+2.47.0.windows.2
+

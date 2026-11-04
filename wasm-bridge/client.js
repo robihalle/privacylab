@@ -1,6 +1,5 @@
 import { TorClient } from 'anyone-client/TorClient.js';
 import { abortRace } from 'anyone-client/abort.js';
-import { MemoryStorage } from 'anyone-client/storage/memory.js';
 import { Log } from 'anyone-client/Log.js';
 import { ensureWasmInitialized, setWasmSourceProvider } from 'anyone-client/wasm.js';
 import { relaySocketProvider } from './relay-socket.js';
@@ -59,7 +58,7 @@ async function connect(bootstrap) {
   const socketProvider = relaySocketProvider();
   const expiresAt = performance.now() + 75_000;
   const client = new TorClient({
-    socketProvider, bootstrap, storage: new MemoryStorage(),
+    socketProvider, bootstrap, storage: null,
     log: new Log({ rawLog() {} }), logLevel: 'error',
   });
   try {

@@ -29,7 +29,7 @@ node wasm-bridge/build-client.mjs "$TOR_JS"
 strip --strip-unneeded -o wasm-bridge/artifacts/tor-js-gateway "$TOR_JS/target/debug/tor-js-gateway"
 ```
 
-Build on a distribution with glibc no newer than the Debian 13 snapshot image. The browser verifies the WASM against the checksum built into its JavaScript bundle and caches that exact version. A second run in the same tab can reuse the browser session for up to 75 seconds from connection start. The session state is held in memory.
+Build on a distribution with glibc no newer than the Debian 13 snapshot image. The browser verifies the WASM against the checksum built into its JavaScript bundle and caches that exact version. A second run in the same tab can reuse the browser session for up to 75 seconds from connection start. Relay and session state stays in WASM memory.
 
 ## Deploy
 
