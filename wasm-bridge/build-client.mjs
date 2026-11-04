@@ -9,7 +9,7 @@ if (!torJsPath) throw new Error('Pass the patched tor-js checkout.');
 const torJs = resolve(torJsPath);
 const require = createRequire(resolve(torJs, 'package.json'));
 const { build } = require('esbuild');
-const wasmDir = resolve(torJs, 'crates/tor-js-wasm/pkg');
+const wasmDir = resolve(torJs, 'crates/tor-js-wasm/pkg-release');
 const artifacts = new URL('./artifacts/', import.meta.url);
 const bytes = await readFile(resolve(wasmDir, 'tor_js_bg.wasm'));
 const notices = await Promise.all([
@@ -17,6 +17,7 @@ const notices = await Promise.all([
   readFile(resolve(torJs, '../arti-browser/LICENSE-MIT'), 'utf8'),
 ]);
 const hash = createHash('sha256').update(bytes).digest('hex');
+const integrity = 'sha256-' + Buffer.from(hash, 'hex').toString('base64');
 
 await mkdir(artifacts, { recursive: true });
 await writeFile(new URL('tor_js_bg.wasm', artifacts), bytes);
@@ -34,6 +35,7 @@ await build({
   external: ['node:*', '@kpstreams/quic-client'],
   define: {
     __WASM_SHA256__: JSON.stringify(hash),
+    __WASM_INTEGRITY__: JSON.stringify(integrity),
     __PACKAGE_VERSION__: JSON.stringify('anyone-privacy-lab'),
   },
   plugins: [{

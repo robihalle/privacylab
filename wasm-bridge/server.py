@@ -2,6 +2,7 @@ import asyncio
 import os
 from collections import Counter
 from datetime import datetime, timezone
+from hashlib import file_digest
 from ipaddress import IPv4Address, ip_address, ip_network
 from pathlib import Path
 
@@ -89,6 +90,11 @@ def make_app(state=STATE, artifacts=ARTIFACTS, origin=None):
     app[ORIGIN] = origin or os.environ["LAB_ORIGIN"]
     directory = Directory(state / "consensus-microdesc.txt")
     limits = Limits()
+    wasm = artifacts / "tor_js_bg.wasm"
+    wasm_version = None
+    if wasm.is_file():
+        with wasm.open("rb") as file:
+            wasm_version = file_digest(file, "sha256").hexdigest()
 
     def snapshot_available():
         return directory.current(datetime.now(timezone.utc))
@@ -100,9 +106,11 @@ def make_app(state=STATE, artifacts=ARTIFACTS, origin=None):
                 "Content-Type": "text/javascript", "Cache-Control": "no-cache",
             })
         if name == "tor_js_bg.wasm":
-            return web.FileResponse(artifacts / name, headers={
-                "Content-Type": "application/wasm", "Cache-Control": "no-cache",
-            })
+            version = request.query.get("v")
+            if version is not None and version != wasm_version:
+                raise web.HTTPNotFound()
+            cache = "public, max-age=31536000, immutable" if version is not None else "no-cache"
+            return web.FileResponse(wasm, headers={"Content-Type": "application/wasm", "Cache-Control": cache})
         raise web.HTTPNotFound()
 
     async def bootstrap(_request):

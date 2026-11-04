@@ -20,9 +20,14 @@ type Result = {
   transport: string;
   target: string;
   gatewayRoundtripMs?: number;
+  startupMs?: number;
+  requestMs?: number;
+  reusedSession?: boolean;
 };
+type WasmPhase = 'assets' | 'connect' | 'retry' | 'request';
 type Measurement =
-  | { state: 'idle' | 'running' | 'skipped' }
+  | { state: 'idle' | 'skipped' }
+  | { state: 'running'; phase?: WasmPhase }
   | { state: 'success'; result: Result }
   | { state: 'error'; message: string };
 type Path = 'direct' | 'anyone' | 'wasm';
@@ -35,6 +40,21 @@ const statusLabels = {
   success: 'Measured',
   error: 'Failed',
 };
+const wasmPhaseLabels: Record<WasmPhase, string> = {
+  assets: 'Loading WebAssembly and the signed directory…',
+  connect: 'Checking the directory and connecting to Anyone…',
+  retry: 'Trying a fresh Anyone connection…',
+  request: 'Sending HTTPS through Anyone…',
+};
+const wasmErrors: Record<string, string> = {
+  'wasm-download': 'Could not download or verify WebAssembly. Reload the page and try again.',
+  'wasm-runtime': 'This browser could not start WebAssembly. Try an updated browser.',
+  directory: 'The signed Anyone directory could not be downloaded. Try again shortly.',
+  'directory-check': 'The browser could not verify the signed directory. Check your device clock and try again.',
+  relay: 'The browser could not connect to an Anyone relay. Try again on this or another connection.',
+  request: 'The test endpoint did not respond through the Anyone circuit. Try again.',
+  response: 'The test endpoint returned an unexpected response.',
+};
 
 function createTestId() {
   return crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)),
@@ -42,7 +62,11 @@ function createTestId() {
 }
 
 function errorMessage(error: unknown, path: Path) {
-  if (path === 'wasm') return 'The browser client could not complete the test. Try again or use the lab server path.';
+  if (path === 'wasm') {
+    const code = (error as { code?: string } | null)?.code;
+    return (code && Object.hasOwn(wasmErrors, code) && wasmErrors[code]) ||
+      'Could not start the browser test. Reload the page and try again.';
+  }
   if (error instanceof DOMException && error.name === 'TimeoutError') {
     return path === 'direct' ? 'The test endpoint did not respond in time.' : 'The Anyone request timed out. Try the comparison again.';
   }
@@ -97,7 +121,7 @@ async function measureAnyone(nonce: string): Promise<Result> {
   return data;
 }
 
-type WasmLab = { measure(nonce: string): Promise<Result> };
+type WasmLab = { measure(nonce: string, progress?: (phase: WasmPhase) => void): Promise<Result> };
 let browserClient: Promise<WasmLab> | undefined;
 
 function loadBrowserClient() {
@@ -122,10 +146,10 @@ function loadBrowserClient() {
   return browserClient;
 }
 
-async function measure(path: Path, nonce: string): Promise<Measurement> {
+async function measure(path: Path, nonce: string, progress?: (phase: WasmPhase) => void): Promise<Measurement> {
   try {
     const result = path === 'wasm'
-      ? await (await loadBrowserClient()).measure(nonce)
+      ? await (await loadBrowserClient()).measure(nonce, progress)
       : await (path === 'direct' ? measureDirect(nonce) : measureAnyone(nonce));
     return { state: 'success', result };
   } catch (error) {
@@ -158,6 +182,13 @@ function ResultCard({ path, measurement }: { path: Path; measurement: Measuremen
         <span>{route}</span>
         {result && <strong>{result.elapsedMs.toLocaleString('en-US')} ms</strong>}
       </div>
+      {measurement.state === 'running' && measurement.phase &&
+        <p className="card-note">{wasmPhaseLabels[measurement.phase]}</p>}
+      {result && result.startupMs !== undefined && result.requestMs !== undefined &&
+        <p className="card-note">
+          {result.reusedSession ? 'Warm session' : 'Setup ' + result.startupMs.toLocaleString('en-US') + ' ms'}
+          {' · Request ' + result.requestMs.toLocaleString('en-US') + ' ms'}
+        </p>}
       {measurement.state === 'error' && <p className="card-error">{measurement.message}</p>}
       {measurement.state === 'skipped' && <p className="card-note">{path === 'wasm' ? 'Include the browser path to measure it.' : 'Run the comparison to measure this path.'}</p>}
     </article>
@@ -214,7 +245,7 @@ export default function Home() {
       await Promise.all([
         measure('direct', directId).then(setDirect),
         anyoneId && measure('anyone', anyoneId).then(setAnyone),
-        wasmId && measure('wasm', wasmId).then(setWasm),
+        wasmId && measure('wasm', wasmId, (phase) => setWasm({ state: 'running', phase })).then(setWasm),
       ]);
     } finally {
       runInProgress.current = false;
@@ -244,7 +275,7 @@ export default function Home() {
         'The Anyone request uses the native Rust client on the lab server.',
         'The experimental WASM path runs in the tab. The lab bridge can see your browser IP and the first relay address.',
         'The destination reports the source IP. The lab server forwards its own result to the browser.',
-        'The browser WASM timing includes client startup and directory download.',
+        'The browser WASM result separates setup (including any retry) from the final request. A repeat in the same tab can reuse its short-lived session.',
       ],
     }, null, 2);
   }
@@ -333,7 +364,7 @@ export default function Home() {
               <p id="wasm-consent">Selecting this option and starting the test means you accept the <a href={terms} target="_blank" rel="noreferrer">Anyone terms</a>.</p>
             </div>
           )}
-          <p className="action-note">The direct test shares your public IP with httpbingo.org. Each request has a separate random ID, and the results are paired in this tab.</p>
+          <p className="action-note">The direct test shares your public IP with httpbingo.org. Each path uses a separate random ID, and the results are paired in this tab.</p>
 
           <div className="result-grid" aria-live="polite">
             <ResultCard path="direct" measurement={direct} />
@@ -416,7 +447,7 @@ export default function Home() {
             </details>
             <details>
               <summary>How should I read the timings?<ArrowDown size={16} aria-hidden="true" /></summary>
-              <p>Direct measures the browser request. The lab server measures its own request through SOCKS. The browser WASM measurement includes directory download, client startup, circuit setup, and the HTTPS request.</p>
+              <p>Direct measures the browser request. The lab server measures its own request through SOCKS. The browser WASM card shows setup and HTTPS request times separately. Run the comparison again right away to try a warm browser session.</p>
             </details>
             <details>
               <summary>What data is shared?<ArrowDown size={16} aria-hidden="true" /></summary>

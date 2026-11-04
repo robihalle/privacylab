@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,6 +20,7 @@ class BridgePolicy(AioHTTPTestCase):
         self.state = Path(temporary.name)
         self.write_directory(datetime.now(timezone.utc))
         (self.state / "bootstrap.zip.zst").write_bytes(b"snapshot")
+        (self.state / "tor_js_bg.wasm").write_bytes(b"wasm fixture")
         return make_app(state=self.state, artifacts=self.state, origin=ORIGIN)
 
     def write_directory(self, now):
@@ -52,6 +54,16 @@ class BridgePolicy(AioHTTPTestCase):
             dial.assert_not_called()
         async with self.client.get("/wasm-lab/bootstrap") as response:
             self.assertEqual(response.status, 503)
+
+    async def test_only_the_matching_wasm_version_is_immutable(self):
+        path = "/wasm-lab/tor_js_bg.wasm"
+        async with self.client.get(path) as response:
+            self.assertEqual(response.headers["Cache-Control"], "no-cache")
+        async with self.client.get(path, params={"v": "old"}) as response:
+            self.assertEqual(response.status, 404)
+        async with self.client.get(path, params={"v": sha256(b"wasm fixture").hexdigest()}) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("immutable", response.headers["Cache-Control"])
 
 
 class BridgeLimits(unittest.TestCase):

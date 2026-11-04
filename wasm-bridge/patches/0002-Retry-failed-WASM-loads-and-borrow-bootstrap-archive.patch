@@ -1,0 +1,90 @@
+From 295d45e604a31c37ec0841cac2d292979c0b4a3b Mon Sep 17 00:00:00 2001
+From: robihalle <robertmoebes@googlemail.com>
+Date: Wed, 4 Nov 2026 22:20:22 +0100
+Subject: [PATCH] Retry failed WASM loads and borrow bootstrap archive members
+
+---
+ crates/tor-js-wasm/src/fast_bootstrap.rs | 12 +++++++-----
+ src/wasm.ts                              |  7 +++++--
+ 2 files changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/crates/tor-js-wasm/src/fast_bootstrap.rs b/crates/tor-js-wasm/src/fast_bootstrap.rs
+index 936fb07..c843d58 100644
+--- a/crates/tor-js-wasm/src/fast_bootstrap.rs
++++ b/crates/tor-js-wasm/src/fast_bootstrap.rs
+@@ -90,6 +90,7 @@ pub async fn maybe_fast_bootstrap(
+ 
+     let consensus_text = files
+         .get("bootstrap/consensus-microdesc.txt")
++        .copied()
+         .ok_or_else(|| {
+             wasm_bindgen::JsValue::from_str(
+                 "fast bootstrap: missing bootstrap/consensus-microdesc.txt in zip",
+@@ -98,11 +99,11 @@ pub async fn maybe_fast_bootstrap(
+ 
+     let authcert_text = files
+         .get("bootstrap/authority-certs.txt")
+-        .map(|s| s.as_str())
++        .copied()
+         .unwrap_or("");
+     let microdesc_text = files
+         .get("bootstrap/microdescs.txt")
+-        .map(|s| s.as_str())
++        .copied()
+         .unwrap_or("");
+ 
+     // Parse consensus using arti's parser to get the signed portion split and lifetime
+@@ -185,7 +186,7 @@ impl std::fmt::Display for ZipError {
+     }
+ }
+ 
+-fn parse_stored_zip(data: &[u8]) -> Result<HashMap<String, String>, ZipError> {
++fn parse_stored_zip(data: &[u8]) -> Result<HashMap<&str, &str>, ZipError> {
+     let mut files = HashMap::new();
+     let mut offset = 0usize;
+ 
+@@ -238,7 +239,7 @@ fn parse_stored_zip(data: &[u8]) -> Result<HashMap<String, String>, ZipError> {
+         let content = std::str::from_utf8(&data[data_start..data_end])
+             .map_err(|_| ZipError::InvalidContent)?;
+ 
+-        files.insert(name.to_string(), content.to_string());
++        files.insert(name, content);
+         // Each member advances at least past its own 30-byte header, so the
+         // loop always makes progress.
+         offset = data_end;
+@@ -500,7 +501,8 @@ mod zip_tests {
+ 
+     #[test]
+     fn a_gateway_archive_yields_its_three_members() {
+-        let files = parse_stored_zip(&bootstrap_archive()).unwrap();
++        let archive = bootstrap_archive();
++        let files = parse_stored_zip(&archive).unwrap();
+         assert_eq!(files.len(), 3);
+         assert_eq!(files["bootstrap/consensus-microdesc.txt"], "consensus text");
+         assert_eq!(files["bootstrap/authority-certs.txt"], "cert text");
+diff --git a/src/wasm.ts b/src/wasm.ts
+index c73a2b8..22b8444 100644
+--- a/src/wasm.ts
++++ b/src/wasm.ts
+@@ -105,7 +105,10 @@ export function setWasmSourceProvider(provider: WasmSourceProvider): void {
+  */
+ export async function ensureWasmInitialized(): Promise<void> {
+   if (initPromise) return initPromise;
+-  initPromise = doInit();
++  initPromise = doInit().catch((error) => {
++    initPromise = null;
++    throw error;
++  });
+   return initPromise;
+ }
+ 
+@@ -132,4 +135,4 @@ async function doInit(): Promise<void> {
+       }
+     }
+   });
+-}
+\ No newline at end of file
++}
+-- 
+2.47.0.windows.2
+

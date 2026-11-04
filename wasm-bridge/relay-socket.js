@@ -1,5 +1,14 @@
 import { ArtiSocket, ArtiSocketProvider } from 'anyone-client/socketProvider.js';
 
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => {
+    resolve = ok;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 export function relaySocketProvider() {
   const sockets = new Set();
   let stopped = false;
@@ -24,8 +33,8 @@ export function relaySocketProvider() {
       cancel() { socket.close(); },
     }, { highWaterMark: 64 });
     let ready = false;
-    const open = Promise.withResolvers();
-    const closed = Promise.withResolvers();
+    const open = deferred();
+    const closed = deferred();
     const timeout = setTimeout(() => socket.close(), 10_000);
     socket.onmessage = ({ data }) => {
       if (data === 'ready' && !ready) {

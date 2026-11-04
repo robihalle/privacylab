@@ -11,13 +11,14 @@ Clone these revisions into sibling directories called `arti-browser` and `tor-js
 - [Arti browser fork](https://github.com/voltrevo/arti/tree/2527494a8961a7522a36f96d9c0048096f657c88)
 - [tor-js](https://github.com/ethereum/tor-js/tree/d9d9612d10d3775ff100b70e96a291718191d856)
 
-Apply the matching patches in `patches/` with `git am`. The directory authority and fallback values come from the [Anyone Rust client](https://github.com/anyone-protocol/anyone-rust/tree/3d447468a4ec0c536a221024ecc9fe30f18d94cf). From the patched tor-js checkout:
+Apply the Arti patch to `arti-browser` and the tor-js patches to `tor-js` with `git am`, in numbered order. The directory authority and fallback values come from the [Anyone Rust client](https://github.com/anyone-protocol/anyone-rust/tree/3d447468a4ec0c536a221024ecc9fe30f18d94cf). From the patched tor-js checkout:
 
 ```sh
 export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0
 cargo build --locked -p tor-js-gateway
-CC_wasm32_unknown_unknown=clang cargo build --locked -p tor-js --target wasm32-unknown-unknown
-wasm-bindgen target/wasm32-unknown-unknown/debug/tor_js.wasm --target web --out-dir crates/tor-js-wasm/pkg --out-name tor_js
+CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_OPT_LEVEL=2 CC_wasm32_unknown_unknown=clang \
+  cargo build --locked --release -p tor-js --target wasm32-unknown-unknown
+wasm-bindgen target/wasm32-unknown-unknown/release/tor_js.wasm --target web --out-dir crates/tor-js-wasm/pkg-release --out-name tor_js
 npm ci
 ```
 
@@ -28,7 +29,7 @@ node wasm-bridge/build-client.mjs "$TOR_JS"
 strip --strip-unneeded -o wasm-bridge/artifacts/tor-js-gateway "$TOR_JS/target/debug/tor-js-gateway"
 ```
 
-Build on a distribution with glibc no newer than the Debian 13 snapshot image. The browser checks the WASM against the checksum built into its JavaScript bundle.
+Build on a distribution with glibc no newer than the Debian 13 snapshot image. The browser verifies the WASM against the checksum built into its JavaScript bundle and caches that exact version. A second run in the same tab can reuse the browser session for up to 75 seconds from connection start. The session state is held in memory.
 
 ## Deploy
 
