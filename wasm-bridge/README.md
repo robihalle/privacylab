@@ -4,7 +4,7 @@ The browser uses a patched tor-js client with the Anyone directory authorities. 
 
 ## Build the artifacts
 
-Use Linux x86-64 for the snapshot binary. Install Rust 1.97.1 with the wasm32-unknown-unknown target, Clang, the system OpenSSL and SQLite development packages, Node.js, npm and wasm-bindgen-cli at the version in the patched Cargo.lock. Binaryen is optional for smaller downloads.
+Use Linux x86-64 for the snapshot binary. Install Rust 1.97.1 with the wasm32-unknown-unknown target, Clang, the system OpenSSL and SQLite development packages, Node.js, npm and wasm-bindgen-cli at the version in the patched Cargo.lock.
 
 Clone these revisions into sibling directories called `arti-browser` and `tor-js`:
 
@@ -24,12 +24,11 @@ npm ci
 From the Privacy Lab checkout, pass the patched tor-js directory as `$TOR_JS`:
 
 ```sh
-wasm-opt --all-features -O2 --strip-debug --strip-producers "$TOR_JS/crates/tor-js-wasm/pkg/tor_js_bg.wasm" -o /tmp/privacy-lab.wasm
-node wasm-bridge/build-client.mjs "$TOR_JS" /tmp/privacy-lab.wasm
+node wasm-bridge/build-client.mjs "$TOR_JS"
 strip --strip-unneeded -o wasm-bridge/artifacts/tor-js-gateway "$TOR_JS/target/debug/tor-js-gateway"
 ```
 
-Omit the second argument to the Node command to use the unoptimized WASM. Build on a distribution with glibc no newer than the Debian 13 snapshot image. The browser checks the WASM against the checksum built into its JavaScript bundle.
+Build on a distribution with glibc no newer than the Debian 13 snapshot image. The browser checks the WASM against the checksum built into its JavaScript bundle.
 
 ## Deploy
 
