@@ -49,6 +49,7 @@ const wasmPhaseLabels: Record<WasmPhase, string> = {
 const wasmErrors: Record<string, string> = {
   'wasm-download': 'Could not download or verify WebAssembly. Reload the page and try again.',
   'wasm-runtime': 'This browser could not start WebAssembly. Try an updated browser.',
+  'wasm-timeout': 'The browser test timed out. Try again on this or another connection.',
   directory: 'The signed Anyone directory could not be downloaded. Try again shortly.',
   'directory-check': 'The browser could not verify the signed directory. Check your device clock and try again.',
   relay: 'The browser could not connect to an Anyone relay. Try again on this or another connection.',
@@ -121,7 +122,7 @@ async function measureAnyone(nonce: string): Promise<Result> {
   return data;
 }
 
-type WasmLab = { measure(nonce: string, progress?: (phase: WasmPhase) => void): Promise<Result> };
+type WasmLab = { measure(nonce: string, progress?: (phase: WasmPhase) => void, startedAt?: number): Promise<Result> };
 let browserClient: Promise<WasmLab> | undefined;
 
 function loadBrowserClient() {
@@ -147,9 +148,10 @@ function loadBrowserClient() {
 }
 
 async function measure(path: Path, nonce: string, progress?: (phase: WasmPhase) => void): Promise<Measurement> {
+  const startedAt = Date.now();
   try {
     const result = path === 'wasm'
-      ? await (await loadBrowserClient()).measure(nonce, progress)
+      ? await (await loadBrowserClient()).measure(nonce, progress, startedAt)
       : await (path === 'direct' ? measureDirect(nonce) : measureAnyone(nonce));
     return { state: 'success', result };
   } catch (error) {
@@ -202,6 +204,7 @@ export default function Home() {
   const [anyone, setAnyone] = useState<Measurement>({ state: 'idle' });
   const [wasm, setWasm] = useState<Measurement>({ state: 'idle' });
   const [wasmEnabled, setWasmEnabled] = useState(false);
+  const [wasmUnavailable, setWasmUnavailable] = useState(false);
   const [includeWasm, setIncludeWasm] = useState(false);
   const [running, setRunning] = useState(false);
   const [reportNotice, setReportNotice] = useState('');
@@ -216,14 +219,19 @@ export default function Home() {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]),
         });
         if (!response.ok) throw new Error('Status request failed.');
-        const data = await response.json() as { configured?: boolean; wasm?: boolean };
+        const data = await response.json() as { configured?: boolean; wasm?: boolean; wasmConfigured?: boolean };
         if (typeof data?.configured !== 'boolean') throw new Error('Unexpected status response.');
         if (!controller.signal.aborted) {
           setGateway(data.configured ? 'configured' : 'unconfigured');
-          setWasmEnabled(data.wasm === true && typeof WebAssembly !== 'undefined' && window.isSecureContext);
+          setWasmUnavailable(data.wasmConfigured === true && data.wasm !== true);
+          setWasmEnabled(data.wasm === true && typeof WebAssembly !== 'undefined' &&
+            typeof Worker !== 'undefined' && window.isSecureContext);
         }
       } catch {
-        if (!controller.signal.aborted) setGateway('unreachable');
+        if (!controller.signal.aborted) {
+          setGateway('unreachable');
+          setWasmEnabled(false);
+        }
       }
     }
     void checkGateway();
@@ -335,8 +343,8 @@ export default function Home() {
             </div>
             <div className="gateway-status">
               <span className={'badge gateway-' + gateway} role="status"><i />{gatewayLabels[gateway]}</span>
-              {(gateway === 'unconfigured' || gateway === 'unreachable') && (
-                <button className="icon-button" type="button" aria-label="Recheck gateway status" title="Recheck gateway status" onClick={() => {
+              {(gateway === 'unconfigured' || gateway === 'unreachable' || wasmUnavailable) && (
+                <button className="icon-button" type="button" aria-label="Recheck path status" title="Recheck path status" disabled={running || gateway === 'checking'} onClick={() => {
                   setGateway('checking');
                   setStatusCheck((value) => value + 1);
                 }}><RefreshCw size={16} aria-hidden="true" /></button>
@@ -376,7 +384,9 @@ export default function Home() {
                   <h3>Anyone in the browser</h3>
                   <span className="badge">Unavailable</span>
                 </div>
-                <p className="result-label">The experimental WebAssembly path is unavailable in this session.</p>
+                <p className="result-label">{wasmUnavailable
+                  ? 'The browser path is temporarily unavailable. Recheck the path status to try again.'
+                  : 'The experimental WebAssembly path is unavailable in this session.'}</p>
                 <a className="planned-link" href="#wasm-method">See how it works <ArrowRight size={15} aria-hidden="true" /></a>
               </article>
             )}

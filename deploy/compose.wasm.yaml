@@ -2,6 +2,8 @@ services:
   web:
     environment:
       ANYONE_WASM_ENABLED: "1"
+      NO_PROXY: gateway,wasm-bridge,localhost,127.0.0.1
+      no_proxy: gateway,wasm-bridge,localhost,127.0.0.1
 
   wasm-snapshot:
     build:

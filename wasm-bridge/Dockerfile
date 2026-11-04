@@ -12,7 +12,9 @@ FROM python:3.12-slim AS bridge
 RUN pip install --no-cache-dir aiohttp==3.14.5
 WORKDIR /lab
 COPY server.py .
-COPY artifacts/client.js artifacts/tor_js_bg.wasm artifacts/tor_js_bg.wasm.gz ./artifacts/
+COPY artifacts/client.js artifacts/client-worker.js artifacts/tor_js_bg.wasm ./artifacts/
+COPY artifacts/tor_js_bg.wasm.br ./artifacts/tor_js_bg.br.wasm
+COPY artifacts/tor_js_bg.wasm.gz ./artifacts/tor_js_bg.gz.wasm
 ENV PYTHONDONTWRITEBYTECODE=1
 USER 10002:10002
 ENTRYPOINT ["python", "server.py"]

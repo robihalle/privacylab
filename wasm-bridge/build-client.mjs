@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { gzipSync } from 'node:zlib';
+import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const torJsPath = process.argv[2];
 if (!torJsPath) throw new Error('Pass the patched tor-js checkout.');
@@ -22,10 +22,13 @@ const integrity = 'sha256-' + Buffer.from(hash, 'hex').toString('base64');
 await mkdir(artifacts, { recursive: true });
 await writeFile(new URL('tor_js_bg.wasm', artifacts), bytes);
 await writeFile(new URL('tor_js_bg.wasm.gz', artifacts), gzipSync(bytes, { level: 9 }));
+await writeFile(new URL('tor_js_bg.wasm.br', artifacts), brotliCompressSync(bytes, {
+  params: { [constants.BROTLI_PARAM_QUALITY]: 11 },
+}));
 await build({
   absWorkingDir: import.meta.dirname,
-  entryPoints: ['client.js'],
-  outfile: 'artifacts/client.js',
+  entryPoints: ['client.js', 'client-worker.js'],
+  outdir: 'artifacts',
   bundle: true,
   minify: true,
   banner: { js: '/*! tor-js and Arti license notices\n' + notices.join('\n') + '*/' },

@@ -9,7 +9,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-export function relaySocketProvider() {
+export function relaySocketProvider(generation) {
   const sockets = new Set();
   let stopped = false;
   const provider = new ArtiSocketProvider({ strategies: [] });
@@ -23,6 +23,7 @@ export function relaySocketProvider() {
     const url = new URL('/wasm-lab/relay', location.origin);
     url.protocol = 'wss:';
     url.searchParams.set('target', target);
+    if (generation) url.searchParams.set('generation', generation);
     const socket = new WebSocket(url);
     sockets.add(socket);
     socket.binaryType = 'arraybuffer';

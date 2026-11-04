@@ -1,0 +1,395 @@
+From ebc50b9f7a5182abeba645fe9895bfbda94bb595 Mon Sep 17 00:00:00 2001
+From: robihalle <robertmoebes@googlemail.com>
+Date: Wed, 4 Nov 2026 22:43:30 +0100
+Subject: [PATCH] Publish coherent directory generations and bound bootstrap
+ decoding
+
+---
+ crates/tor-js-gateway/src/main.rs            |   6 +-
+ crates/tor-js-gateway/src/store/microdesc.rs |   6 +-
+ crates/tor-js-gateway/src/sync.rs            | 160 ++++++++++++++++---
+ crates/tor-js-wasm/src/fast_bootstrap.rs     |  68 +++++++-
+ 4 files changed, 207 insertions(+), 33 deletions(-)
+
+diff --git a/crates/tor-js-gateway/src/main.rs b/crates/tor-js-gateway/src/main.rs
+index f55412a..41d3153 100644
+--- a/crates/tor-js-gateway/src/main.rs
++++ b/crates/tor-js-gateway/src/main.rs
+@@ -319,7 +319,8 @@ async fn run(config_path: &PathBuf, once: bool, no_sync: bool, no_mirror: bool)
+                     return Ok(());
+                 }
+                 let delay =
+-                    sync::relay_sync_delay(lifetime.fresh_until(), lifetime.valid_until());
++                    sync::relay_sync_delay(lifetime.fresh_until(), lifetime.valid_until())
++                        .max(Duration::from_secs(60));
+                 tracing::info!(
+                     "next sync in {} (at ~{})",
+                     humantime::format_duration(delay),
+@@ -328,6 +329,9 @@ async fn run(config_path: &PathBuf, once: bool, no_sync: bool, no_mirror: bool)
+                 tokio::time::sleep(delay).await;
+             }
+             Ok(None) => {
++                if once {
++                    return Ok(());
++                }
+                 let retry = Duration::from_secs(60);
+                 tracing::info!("retrying in {}", humantime::format_duration(retry));
+                 tokio::time::sleep(retry).await;
+diff --git a/crates/tor-js-gateway/src/store/microdesc.rs b/crates/tor-js-gateway/src/store/microdesc.rs
+index ebd6e90..00ad52d 100644
+--- a/crates/tor-js-gateway/src/store/microdesc.rs
++++ b/crates/tor-js-gateway/src/store/microdesc.rs
+@@ -111,8 +111,10 @@ impl MicrodescStore {
+ 
+     /// Serialize all stored microdescs as a concatenated blob.
+     pub fn to_concatenated(&self) -> Vec<u8> {
+-        let mut out = Vec::new();
+-        for text in self.entries.values() {
++        let mut entries: Vec<_> = self.entries.iter().collect();
++        entries.sort_unstable_by_key(|(digest, _)| **digest);
++        let mut out = Vec::with_capacity(entries.iter().map(|(_, text)| text.len()).sum());
++        for (_, text) in entries {
+             out.extend_from_slice(text.as_bytes());
+         }
+         out
+diff --git a/crates/tor-js-gateway/src/sync.rs b/crates/tor-js-gateway/src/sync.rs
+index b48ef25..4e3da53 100644
+--- a/crates/tor-js-gateway/src/sync.rs
++++ b/crates/tor-js-gateway/src/sync.rs
+@@ -6,9 +6,11 @@ use std::time::{Duration, SystemTime};
+ 
+ use anyhow::{Context, Result};
+ use base64ct::Encoding as _;
++use digest::Digest;
+ use rand::Rng;
++use serde::{Deserialize, Serialize};
+ use tor_checkable::{ExternallySigned, TimeValidityError, Timebound};
+-use tor_llcrypto::pk::rsa::RsaIdentity;
++use tor_llcrypto::{d::Sha256, pk::rsa::RsaIdentity};
+ use tor_netdoc::doc::netstatus::{Lifetime, MdConsensus};
+ 
+ use arti_client::TorClient;
+@@ -63,22 +65,27 @@ pub async fn sync_once(
+             "fetching consensus{}...",
+             if diff_hex.is_some() { " (requesting diff)" } else { "" }
+         );
+-        let consensus_bytes = match crate::dir::get(
++        match crate::dir::get(
+             &tunnel,
+             "/tor/status-vote/current/consensus-microdesc",
+             diff_hex.as_deref(),
+         )
+         .await?
+         {
+-            Some(bytes) => bytes,
++            Some(bytes) => {
++                let response_text = String::from_utf8(bytes)
++                    .context("consensus response is not valid UTF-8")?;
++                stores.consensus.resolve_response(response_text)?
++            }
+             None => {
+                 tracing::info!("server returned 304 Not Modified, consensus unchanged");
+-                return Ok(None);
++                stores
++                    .consensus
++                    .text()
++                    .context("consensus was not modified but no cached text is available")?
++                    .to_string()
+             }
+-        };
+-        let response_text = String::from_utf8(consensus_bytes)
+-            .context("consensus response is not valid UTF-8")?;
+-        stores.consensus.resolve_response(response_text)?
++        }
+     };
+ 
+     // --- Fetch authority certificates (only if coverage is incomplete) ---
+@@ -233,23 +240,54 @@ pub async fn sync_once(
+         serde_json::to_string_pretty(&metadata)?.as_bytes(),
+     )?;
+ 
+-    // --- Create bootstrap archive if consensus changed or file missing ---
+-    let new_digest = stores.consensus.diff_hex();
+-    if new_digest != old_digest || !output_dir.join("bootstrap.zip").exists() {
+-        write_bootstrap_archive(output_dir, consensus_text.as_bytes(), stores.certs.text().as_bytes(), &microdescs_blob)?;
+-    } else {
+-        tracing::info!("consensus unchanged, skipping bootstrap archive");
+-    }
++    // A recovered descriptor changes the generation even if the consensus is unchanged.
++    write_bootstrap_archive(
++        output_dir,
++        consensus_text.as_bytes(),
++        stores.certs.text().as_bytes(),
++        &microdescs_blob,
++    )?;
++
++    Ok(still_missing.is_empty().then_some(lifetime))
++}
+ 
+-    Ok(Some(lifetime))
++#[derive(Serialize, Deserialize)]
++struct PublishedGenerations {
++    current: String,
++    previous: Option<String>,
+ }
+ 
+-/// Create `bootstrap.zip.zst`: a store-only zip of the bootstrap files,
+-/// zstd-compressed (level 9).
++fn is_generation_id(id: &str) -> bool {
++    id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
++}
++
++/// Keep the immutable pair together behind an atomically replaced manifest.
+ fn write_bootstrap_archive(dir: &Path, consensus: &[u8], certs: &[u8], microdescs: &[u8]) -> Result<()> {
+     use zip::write::SimpleFileOptions;
+     use zip::CompressionMethod;
+ 
++    let mut hash = Sha256::new();
++    hash.update(b"privacy-lab bootstrap v1\0");
++    for part in [consensus, certs, microdescs] {
++        hash.update((part.len() as u64).to_le_bytes());
++        hash.update(part);
++    }
++    let id = hex::encode(hash.finalize());
++    let generations = dir.join("generations");
++    let generation = generations.join(&id);
++    let ready = generation.join("consensus-microdesc.txt").is_file()
++        && generation.join("bootstrap.zip.zst").is_file();
++    let old: Option<PublishedGenerations> = std::fs::read(dir.join("current.json"))
++        .ok()
++        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
++    if ready && old.as_ref().is_some_and(|manifest| manifest.current == id)
++        && ["bootstrap.zip", "bootstrap.zip.zst", "bootstrap.etag"]
++            .iter()
++            .all(|name| dir.join(name).is_file())
++    {
++        return Ok(());
++    }
++
+     // Build store-only zip in memory
+     let mut zip_buf = Vec::new();
+     {
+@@ -269,23 +307,70 @@ fn write_bootstrap_archive(dir: &Path, consensus: &[u8], certs: &[u8], microdesc
+     }
+ 
+     // Zstd-compress the zip (level 9).
++    anyhow::ensure!(zip_buf.len() <= 128 * 1024 * 1024, "bootstrap archive exceeds decoded limit");
+     let zst_buf = zstd::encode_all(&zip_buf[..], 9).context("zstd-compressing bootstrap archive")?;
++    anyhow::ensure!(zst_buf.len() <= 8 * 1024 * 1024, "bootstrap archive exceeds compressed limit");
+ 
+-    // ETag: SHA3-256 of the uncompressed zip archive
+-    use digest::Digest;
++    // Keep the flat KPS files available to consumers of the old layout.
+     let etag = hex::encode(sha3::Sha3_256::digest(&zip_buf));
+     atomic_write(dir, "bootstrap.etag", etag.as_bytes())?;
+-
+     atomic_write(dir, "bootstrap.zip", &zip_buf)?;
+     atomic_write(dir, "bootstrap.zip.zst", &zst_buf)?;
++    if !ready {
++        std::fs::create_dir_all(&generation).context("creating bootstrap generation directory")?;
++        atomic_write(&generation, "consensus-microdesc.txt", consensus)?;
++        atomic_write(&generation, "bootstrap.zip.zst", &zst_buf)?;
++    }
++
++    let previous = old.as_ref().and_then(|manifest| {
++        let previous = if manifest.current == id {
++            manifest.previous.as_ref()?
++        } else {
++            &manifest.current
++        };
++        is_generation_id(previous).then(|| previous.clone())
++    });
++    let manifest = PublishedGenerations { current: id, previous };
++    atomic_write(dir, "current.json", &serde_json::to_vec(&manifest)?)?;
++
++    // Keep the prior manifest's previous files for readers that opened it just
++    // before publication. They are reclaimed on a later successful rotation.
++    if let Err(error) = prune_generations(&generations, &manifest, old.as_ref()) {
++        tracing::warn!("could not prune bootstrap generations: {error:#}");
++    }
+     tracing::info!(
+-        "wrote bootstrap.zip ({} bytes), .zst ({} bytes)",
++        "published bootstrap {} ({} bytes), .zst ({} bytes)",
++        manifest.current,
+         zip_buf.len(),
+         zst_buf.len(),
+     );
+     Ok(())
+ }
+ 
++fn prune_generations(
++    generations: &Path,
++    manifest: &PublishedGenerations,
++    old: Option<&PublishedGenerations>,
++) -> Result<()> {
++    let protected = [
++        Some(manifest.current.as_str()),
++        manifest.previous.as_deref(),
++        old.and_then(|item| item.previous.as_deref()),
++    ];
++    for entry in std::fs::read_dir(generations)? {
++        let entry = entry?;
++        let name = entry.file_name();
++        if let Some(id) = name.to_str()
++            && is_generation_id(id)
++            && !protected.contains(&Some(id))
++            && entry.file_type()?.is_dir()
++        {
++            std::fs::remove_dir_all(entry.path())?;
++        }
++    }
++    Ok(())
++}
++
+ /// Compute the relay-style sync delay.
+ ///
+ /// Per dir-spec §5.3 (download-ns-from-auth):
+@@ -522,6 +607,37 @@ mod tests {
+         assert_ne!(first, second);
+     }
+ 
++    #[test]
++    fn publication_keeps_the_snapshot_and_consensus_in_one_generation() {
++        let dir = TempDir::new("sync-generation");
++        let path = dir.path();
++        write_bootstrap_archive(path, b"consensus", b"certs", b"partial").unwrap();
++        let first: PublishedGenerations =
++            serde_json::from_slice(&std::fs::read(path.join("current.json")).unwrap()).unwrap();
++        assert!(is_generation_id(&first.current));
++        assert!(first.previous.is_none());
++
++        write_bootstrap_archive(path, b"consensus", b"certs", b"complete").unwrap();
++        let second: PublishedGenerations =
++            serde_json::from_slice(&std::fs::read(path.join("current.json")).unwrap()).unwrap();
++        assert_ne!(first.current, second.current, "descriptor recovery rotates the snapshot");
++        assert_eq!(second.previous.as_deref(), Some(first.current.as_str()));
++
++        let generation = path.join("generations").join(&second.current);
++        let consensus = std::fs::read(generation.join("consensus-microdesc.txt")).unwrap();
++        let compressed = std::fs::read(generation.join("bootstrap.zip.zst")).unwrap();
++        let members = parse_like_the_client(&zstd::decode_all(compressed.as_slice()).unwrap());
++        assert_eq!(members[0].1, consensus);
++        assert_eq!(members[2].1, b"complete");
++        assert!(path.join("generations").join(&first.current).is_dir());
++
++        write_bootstrap_archive(path, b"consensus", b"certs", b"complete").unwrap();
++        let repeated: PublishedGenerations =
++            serde_json::from_slice(&std::fs::read(path.join("current.json")).unwrap()).unwrap();
++        assert_eq!(repeated.current, second.current);
++        assert_eq!(repeated.previous, second.previous);
++    }
++
+     #[test]
+     fn empty_members_are_still_valid_archive_entries() {
+         // A gateway that has not yet fetched certs writes an empty member
+diff --git a/crates/tor-js-wasm/src/fast_bootstrap.rs b/crates/tor-js-wasm/src/fast_bootstrap.rs
+index c843d58..f6c788b 100644
+--- a/crates/tor-js-wasm/src/fast_bootstrap.rs
++++ b/crates/tor-js-wasm/src/fast_bootstrap.rs
+@@ -21,6 +21,7 @@ use crate::storage::CachedJsStorage;
+ use arti_client::storage::KeyValueStore;
+ use digest::Digest;
+ use std::collections::HashMap;
++use std::io::Read;
+ use tor_checkable::{ExternallySigned, SelfSigned, Timebound};
+ use tor_llcrypto::pk::rsa::RsaIdentity;
+ use tor_netdoc::doc::authcert::AuthCert;
+@@ -30,20 +31,46 @@ use web_time_compat::{SystemTime, SystemTimeExt};
+ 
+ /// Zstd frame magic number (little-endian 0xFD2FB528).
+ const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
++const MAX_BOOTSTRAP_BYTES: usize = 128 * 1024 * 1024;
++const MAX_COMPRESSED_BOOTSTRAP_BYTES: usize = 8 * 1024 * 1024;
++const MAX_ZSTD_WINDOW_BYTES: u64 = 64 * 1024 * 1024;
+ 
+ /// Decompress the archive if it is zstd-compressed (tor-js-gateway serves
+ /// `/bootstrap.zip.zst` as raw zstd bytes over KPS — there is no transparent
+ /// content-encoding on KPS streams). Raw zip bytes pass through unchanged.
+ fn maybe_decompress_zstd(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+-    if bytes.len() < 4 || bytes[..4] != ZSTD_MAGIC {
+-        return Ok(bytes);
++    decode_snapshot(bytes, MAX_BOOTSTRAP_BYTES)
++}
++
++fn decode_snapshot(bytes: Vec<u8>, output_limit: usize) -> Result<Vec<u8>, String> {
++    let size_error = || format!("fast bootstrap: snapshot exceeds {output_limit} decoded bytes");
++    if !bytes.starts_with(&ZSTD_MAGIC) {
++        return if bytes.len() <= output_limit {
++            Ok(bytes)
++        } else {
++            Err(size_error())
++        };
++    }
++    if bytes.len() > MAX_COMPRESSED_BOOTSTRAP_BYTES {
++        return Err("fast bootstrap: compressed snapshot exceeds the input limit".into());
+     }
+     let cursor = std::io::Cursor::new(bytes);
+-    let mut decoder = ruzstd::decoding::StreamingDecoder::new(cursor)
+-        .map_err(|e| format!("fast bootstrap: zstd decode error: {}", e))?;
++    let mut decoder =
++        ruzstd::decoding::StreamingDecoder::new_with_max_window_size(cursor, MAX_ZSTD_WINDOW_BYTES)
++            .map_err(|e| format!("fast bootstrap: zstd decode error: {e}"))?;
+     let mut decompressed = Vec::new();
+-    std::io::Read::read_to_end(&mut decoder, &mut decompressed)
+-        .map_err(|e| format!("fast bootstrap: zstd decompress error: {}", e))?;
++    decoder
++        .by_ref()
++        .take(output_limit as u64)
++        .read_to_end(&mut decompressed)
++        .map_err(|e| format!("fast bootstrap: zstd decompress error: {e}"))?;
++    if decompressed.len() == output_limit
++        && decoder
++            .read(&mut [0_u8; 1])
++            .map_err(|e| format!("fast bootstrap: zstd decompress error: {e}"))? != 0
++    {
++        return Err(size_error());
++    }
+     info!(
+         "Fast bootstrap: decompressed zstd archive to {} bytes",
+         decompressed.len()
+@@ -77,8 +104,22 @@ pub async fn maybe_fast_bootstrap(
+         })?;
+     let promise = js_sys::Promise::from(promise);
+     let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
+-    let zip_bytes =
+-        maybe_decompress_zstd(js_sys::Uint8Array::from(result).to_vec()).map_err(js_err)?;
++    let archive = js_sys::Uint8Array::from(result);
++    let size = archive.length() as usize;
++    let compressed = size >= ZSTD_MAGIC.len()
++        && ZSTD_MAGIC
++            .iter()
++            .enumerate()
++            .all(|(index, byte)| archive.get_index(index as u32) == *byte);
++    let limit = if compressed {
++        MAX_COMPRESSED_BOOTSTRAP_BYTES
++    } else {
++        MAX_BOOTSTRAP_BYTES
++    };
++    if size > limit {
++        return Err(js_err("fast bootstrap: snapshot exceeds the input limit"));
++    }
++    let zip_bytes = maybe_decompress_zstd(archive.to_vec()).map_err(js_err)?;
+ 
+     info!(
+         "Fast bootstrap: received {} bytes, parsing...",
+@@ -672,6 +713,17 @@ mod zip_tests {
+         assert_eq!(parse_stored_zip(&decompressed).unwrap().len(), 3);
+     }
+ 
++    #[test]
++    fn the_decoded_limit_covers_raw_and_compressed_snapshots() {
++        let bytes = vec![0; 1024];
++        for archive in [bytes.clone(), zstd_encode(&bytes)] {
++            assert_eq!(decode_snapshot(archive.clone(), bytes.len()).unwrap(), bytes);
++            assert!(decode_snapshot(archive, bytes.len() - 1)
++                .unwrap_err()
++                .contains("exceeds 1023 decoded bytes"));
++        }
++    }
++
+     #[test]
+     fn a_corrupt_zstd_frame_is_an_error_not_a_panic() {
+         let mut compressed = zstd_encode(&bootstrap_archive());
+-- 
+2.47.0.windows.2
+

@@ -50,11 +50,34 @@ test('JSON null returns a validation error', async () => {
   assert.equal((await privacyApi(req(null), env)).status, 400);
 });
 
-test('browser WASM is opt-in and advertised only by the LXC API', async () => {
+test('only the opt-in LXC API checks browser WASM readiness', async () => {
   const status = new Request(origin + '/api/lab/status');
   const enabled = {...env, ANYONE_WASM_ENABLED: '1'};
   const options = {allowInternalGateway: true};
-  assert.equal((await (await privacyApi(status, env, options)).json()).wasm, false);
-  assert.equal((await (await privacyApi(status, enabled)).json()).wasm, false);
-  assert.equal((await (await privacyApi(status, enabled, options)).json()).wasm, true);
+  const previousFetch = globalThis.fetch;
+  try {
+    let checks = 0;
+    globalThis.fetch = async (url, request) => {
+      checks += 1;
+      assert.equal(url, 'http://wasm-bridge:8080/wasm-lab/health');
+      assert.equal(request.redirect, 'error');
+      return Response.json({ready: true});
+    };
+    assert.equal((await (await privacyApi(status, env, options)).json()).wasm, false);
+    assert.equal((await (await privacyApi(status, enabled)).json()).wasm, false);
+    assert.equal(checks, 0);
+    const ready = await (await privacyApi(status, enabled, options)).json();
+    assert.equal(ready.wasmConfigured, true);
+    assert.equal(ready.wasm, true);
+    assert.equal(checks, 1);
+    globalThis.fetch = async () => Response.json({ready: false}, {status: 503});
+    const unavailable = await (await privacyApi(status, enabled, options)).json();
+    assert.equal(unavailable.configured, true);
+    assert.equal(unavailable.wasmConfigured, true);
+    assert.equal(unavailable.wasm, false);
+    globalThis.fetch = async () => { throw new Error('connection refused'); };
+    assert.equal((await (await privacyApi(status, enabled, options)).json()).wasm, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });

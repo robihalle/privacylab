@@ -1,6 +1,6 @@
 # Experimental browser path
 
-The browser uses a patched tor-js client with the Anyone directory authorities. The native snapshot process verifies consensus signatures and publishes a directory snapshot. The browser validates that snapshot again and builds its own circuit. The WebSocket bridge accepts only public IPv4 relay endpoints from the verified, unexpired directory. It forwards relay bytes with connection, duration and byte limits.
+The browser runs a patched tor-js client in a Web Worker. The native snapshot process verifies consensus signatures and publishes the snapshot and its relay list together. The browser validates the snapshot again and builds its own circuit. The WebSocket bridge accepts only public IPv4 relay endpoints from the verified, unexpired directory generation. It forwards relay bytes with connection, duration and byte limits.
 
 ## Build the artifacts
 
@@ -29,10 +29,10 @@ node wasm-bridge/build-client.mjs "$TOR_JS"
 strip --strip-unneeded -o wasm-bridge/artifacts/tor-js-gateway "$TOR_JS/target/debug/tor-js-gateway"
 ```
 
-Build on a distribution with glibc no newer than the Debian 13 snapshot image. The browser verifies the WASM against the checksum built into its JavaScript bundle and caches that exact version. A second run in the same tab can reuse the browser session for up to 75 seconds from connection start. Relay and session state stays in WASM memory.
+Build on a distribution with glibc no newer than the Debian 13 snapshot image. The client build produces precompressed Brotli and gzip variants. The browser checks the WASM against the checksum built into its JavaScript bundle and caches that exact version. It can revalidate the public directory download independently of the short-lived relay session, which stays in WASM memory.
 
 ## Deploy
 
-Add `deploy/compose.wasm.yaml` after the usual Compose files. Build the services and start `wasm-snapshot` and `wasm-bridge`. The named volume must be writable by the snapshot image's UID 10001 and readable by the bridge. Only the bridge needs a route from Caddy. Replace the site's final `reverse_proxy web:3000` with the handlers in `deploy/wasm-route.caddy`. Validate and reload Caddy, then check that `/wasm-lab/bootstrap` serves a snapshot. Recreate `web` with the Compose override to enable the browser option in the UI. For rollback, remove the override from the web service configuration, recreate `web`, restore the old Caddy handlers and stop the two WASM services.
+Add `deploy/compose.wasm.yaml` after the usual Compose files. Build the services and start `wasm-snapshot`. The named volume must be writable by the snapshot image's UID 10001 and readable by the bridge. Wait for `/state/current.json` to name a valid generation, then start `wasm-bridge`. Only the bridge needs a route from Caddy. Replace the site's final `reverse_proxy web:3000` with the handlers in `deploy/wasm-route.caddy`. Validate and reload Caddy, then check `/wasm-lab/health` and `/wasm-lab/bootstrap`. Recreate `web` with the Compose override to enable the browser option in the UI when the bridge is ready. For rollback, remove the override from the web service configuration, recreate `web`, restore the old Caddy handlers and stop the two WASM services.
 
 The bridge trusts the client address header rewritten by Caddy and has no published port. If an external proxy is added later, configure trusted proxy addresses and adapt this header to use Caddy's validated client address.
